@@ -37,6 +37,37 @@ def _encoded_list() -> str:
     return base64.b64encode(json.dumps(FAKE_LIST).encode()).decode()
 
 
+def test_malformed_secret_removes_temporary_file(monkeypatch, tmp_path):
+    tmp_path = tmp_path / "denylist-temp"
+    tmp_path.mkdir()
+    monkeypatch.setattr(rr.tempfile, "tempdir", str(tmp_path))
+    malformed = base64.b64encode(b"{not json").decode("ascii")
+    assert rr._from_env({rr.DENYLIST_ENV: malformed}) is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_secret_write_failure_closes_before_unlink(monkeypatch, tmp_path):
+    tmp_path = tmp_path / "denylist-temp"
+    tmp_path.mkdir()
+    monkeypatch.setattr(rr.tempfile, "tempdir", str(tmp_path))
+    handle = rr.tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+    unlink = rr.os.unlink
+
+    def fail_write(_data):
+        raise OSError("synthetic write failure")
+
+    def unlink_closed(path):
+        assert handle.closed
+        unlink(path)
+
+    monkeypatch.setattr(handle, "write", fail_write)
+    monkeypatch.setattr(rr.tempfile, "NamedTemporaryFile", lambda **_kwargs: handle)
+    monkeypatch.setattr(rr.os, "unlink", unlink_closed)
+    assert rr._from_env({rr.DENYLIST_ENV: _encoded_list()}) is None
+    assert handle.closed
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.fixture(autouse=True)
 def _fake_denylist(monkeypatch):
     monkeypatch.setenv(rr.DENYLIST_ENV, _encoded_list())

@@ -96,7 +96,7 @@ class MarkerBrake:
         state = {"engaged": engaged, "marker": str(p)}
         if engaged:
             try:
-                state["detail"] = json.loads(p.read_text())
+                state["detail"] = json.loads(p.read_text(encoding="utf-8"))
             except Exception:
                 state["detail"] = None
         return state

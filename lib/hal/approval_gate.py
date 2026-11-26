@@ -184,14 +184,14 @@ class ApprovalGate:
     def _load_state(self) -> None:
         """Load autonomy level from disk."""
         try:
-            with open(self._state_path) as f:
+            with open(self._state_path, encoding="utf-8") as f:
                 data = json.load(f)
             self._level = ApprovalLevel(data.get("level", "approve_pr"))
         except (FileNotFoundError, json.JSONDecodeError, ValueError):
             self._level = ApprovalLevel.APPROVE_PR
 
         try:
-            with open(self._pending_path) as f:
+            with open(self._pending_path, encoding="utf-8") as f:
                 self._pending = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             self._pending = {}
@@ -210,8 +210,12 @@ def _write_secure_json(path: str, data: dict) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception:
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+    except BaseException:
+        # Only a failed fdopen leaves the descriptor ours to close. Once it
+        # succeeds the file object owns it, and a second close would hide the
+        # real error behind EBADF.
         os.close(fd)
         raise
+    with handle as f:
+        json.dump(data, f, indent=2)

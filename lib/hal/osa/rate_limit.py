@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -89,11 +90,28 @@ CREATE INDEX IF NOT EXISTS ix_dispatches_script_ts
 """
 
 
+# Serialises connection setup in this process: threads that opened the database
+# at the same moment raced to change its journal mode, and one could fail with
+# "database is locked" instead of getting a result (HAL#919).
+_SETUP_LOCK = threading.Lock()
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
-    """Open a connection with schema applied. WAL for concurrent safety."""
+    """Open a connection with schema applied, in WAL mode where SQLite allows it.
+
+    WAL mode is stored in the database file, so it is set only when the file
+    is not in WAL yet.
+    """
     conn = sqlite3.connect(str(db_path), isolation_level=None, timeout=2.0)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.executescript(_SCHEMA)
+    try:
+        with _SETUP_LOCK:
+            (mode,) = conn.execute("PRAGMA journal_mode").fetchone()
+            if str(mode).lower() != "wal":
+                conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(_SCHEMA)
+    except BaseException:
+        conn.close()  # the caller's finally never sees a connection that failed here
+        raise
     return conn
 
 

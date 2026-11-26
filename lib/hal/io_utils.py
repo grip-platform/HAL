@@ -9,7 +9,7 @@ import os
 def atomic_write(path: str, data: str) -> None:
     """Write atomically via temp file + os.replace."""
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         f.write(data)
     os.replace(tmp, path)
 

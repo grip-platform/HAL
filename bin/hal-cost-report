@@ -117,7 +117,7 @@ def summarise(audit: Path, *, days: int, now: dt.datetime | None = None) -> dict
     unparsed = 0
     earliest = latest = None
 
-    with audit.open(errors="replace") as fh:
+    with audit.open(errors="replace", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:

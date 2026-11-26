@@ -126,7 +126,7 @@ class TestKimiCodingCatalogRows(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         fd, cls.path = tempfile.mkstemp(suffix=".yaml")
-        with os.fdopen(fd, "w") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write("models:\n\n" + KIMI_CODING_CATALOG_ROWS)
         cls.entries = load_catalogue(cls.path)
 

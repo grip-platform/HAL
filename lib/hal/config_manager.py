@@ -74,7 +74,7 @@ class ConfigManager:
             if k not in _DEFAULTS or _DEFAULTS[k] != v
         }
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
-        with open(self._path, "w") as f:
+        with open(self._path, "w", encoding="utf-8") as f:
             json.dump(overrides, f, indent=2)
 
     def reset(self, key: str) -> None:
@@ -87,7 +87,7 @@ class ConfigManager:
         if not os.path.exists(self._path):
             return
         try:
-            with open(self._path) as f:
+            with open(self._path, encoding="utf-8") as f:
                 overrides = json.load(f)
             if isinstance(overrides, dict):
                 self._config.update(overrides)

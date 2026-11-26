@@ -44,6 +44,7 @@ from lib.agora_pr_review import (  # noqa: E402
     _parse_judge_output,
     _dispatch_judge,
     _JUDGE_MAX_TOKENS,
+    _JUDGE_RUNG_MAX_TOKENS,
     _create_defer_issue,
     _detect_knowledge_work_pr,
     _extract_diff_files,
@@ -95,14 +96,20 @@ def test_judge_is_a_google_provider():
     assert "gemini" in judge_provider or "google" in judge_provider
 
 
-def test_judge_is_pro_model_not_flash():
+def test_judge_is_frontier_tier_not_flash():
     """Anchor the Flash->Pro upgrade (2026-05-29): the judge model must be a
     Pro-tier Gemini, never Flash. The Flash judge produced false-positive
     REQUEST_CHANGES verdicts on correct PRs (#387/#389/#390) that contradicted
     its own speaker synthesis. Goodhart-proof: fails if the judge is reverted to
     a Flash model."""
     judge_model = _JUDGE_PROVIDER[1].lower()
-    assert "pro" in judge_model, f"judge must be a Pro-tier model, got {judge_model!r}"
+    # Gemini 4 ids carry no "pro", so the tier is read from the catalogue row
+    # (V>> 2026-11-26 moved the judge to gemini-4-carbon).
+    import yaml
+    catalogue = Path(__file__).resolve().parent.parent / "config" / "model_catalog.yaml"
+    rows = yaml.safe_load(catalogue.read_text(encoding="utf-8"))["models"]
+    tiers = {row.get("address"): row.get("tier") for row in rows}
+    assert tiers.get(_JUDGE_PROVIDER[1]) == "frontier", f"judge must be frontier tier, got {judge_model!r}"
     assert "flash" not in judge_model, f"judge regressed to Flash: {judge_model!r}"
 
 
@@ -118,7 +125,7 @@ def test_judge_model_is_in_catalog():
         os.path.dirname(__file__), "..", "config", "model_catalog.yaml")
     with open(catalog, encoding="utf-8") as f:
         catalog_text = f.read()
-    judge_model = _JUDGE_PROVIDER[1]  # e.g. "gemini/gemini-3.1-pro-preview"
+    judge_model = _JUDGE_PROVIDER[1]  # e.g. "gemini/gemini-4-carbon"
     assert judge_model in catalog_text, (
         f"judge model {judge_model!r} not in config/model_catalog.yaml — an "
         "uncatalogued/typo'd judge would fail-close every review"
@@ -550,7 +557,7 @@ def test_multi_real_file_pr_with_basename_alias_keeps_per_speaker_check():
 # ---------------------------------------------------------------------------
 
 def test_judge_envelope_has_ample_max_tokens():
-    """The judge (gemini-3.1-pro-preview, a THINKING model) MUST get a
+    """The judge (gemini-4-carbon since 2026-11-26, a THINKING model) MUST get a
     max_tokens budget far above the shared 2048 default, so its variable
     thinking tokens never crowd out the visible Verdict/TL;DR/ELI5/Reasoning.
 
@@ -584,9 +591,10 @@ def test_judge_envelope_has_ample_max_tokens():
         _dispatch_judge("PR title", "A out", "B out", "C out")
 
     flags = captured["envelope"]["flags"]
-    assert flags["max_tokens"] == _JUDGE_MAX_TOKENS, (
+    expected = _JUDGE_RUNG_MAX_TOKENS.get(_JUDGE_PROVIDER[1], _JUDGE_MAX_TOKENS)
+    assert flags["max_tokens"] == expected, (
         f"Judge envelope max_tokens={flags.get('max_tokens')!r}, expected "
-        f"{_JUDGE_MAX_TOKENS}. The judge-only override in _dispatch_judge was "
+        f"{expected}. The judge-only override in _dispatch_judge was "
         "dropped — it falls back to the fatal 2048 default."
     )
     assert flags["max_tokens"] > 2048, (

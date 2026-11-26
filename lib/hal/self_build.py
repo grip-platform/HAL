@@ -15,6 +15,7 @@ Usage:
 import os
 import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 
@@ -233,9 +234,9 @@ class SelfBuilder:
         os.makedirs(os.path.dirname(generated.module_path), exist_ok=True)
         os.makedirs(os.path.dirname(generated.test_path), exist_ok=True)
 
-        with open(generated.module_path, "w") as f:
+        with open(generated.module_path, "w", encoding="utf-8") as f:
             f.write(generated.module_source)
-        with open(generated.test_path, "w") as f:
+        with open(generated.test_path, "w", encoding="utf-8") as f:
             f.write(generated.test_source)
 
         return self._run_tests(generated.test_path)
@@ -244,7 +245,7 @@ class SelfBuilder:
         """Run the specific test file."""
         try:
             result = subprocess.run(
-                ["python3", "-m", "unittest", test_path, "-q"],
+                [sys.executable, "-m", "unittest", test_path, "-q"],
                 capture_output=True, text=True, timeout=60,
                 cwd=_HAL_HOME,
                 env={**os.environ, "HAL_HOME": _HAL_HOME},

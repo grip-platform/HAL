@@ -38,6 +38,10 @@ POSIX = {"python": "/opt/grip/venv/bin/python", "hal_home": "/opt/hal",
          "log_dir": "/opt/hal-logs"}
 WINDOWS = {"python": r"C:\grip\venv\Scripts\python.exe", "hal_home": r"C:\hal",
            "log_dir": r"C:\hal-logs", "user": r"EXAMPLE\jane"}
+#: The platform whose absolute-path rules match this host. The four real-disk
+#: validation tests use host-native ``tmp_path`` values; rendered-text tests
+#: continue to choose their target platform independently.
+_HOST_PLATFORM = "schtasks" if os.name == "nt" else "launchd"
 #: The only variables a template may set. A new one -- a token, say -- fails
 #: here until a reviewer decides it belongs.
 ENV_ALLOWLIST = {"gateway": {"HAL_HOME", "HAL_GATEWAY_MULTIPROVIDER", "HAL_GATEWAY_NO_RECLAIM",
@@ -263,10 +267,14 @@ def test_a_system_interpreter_is_refused(tmp_path):
     system.parent.mkdir(parents=True)
     system.write_text("", encoding="utf-8")
     with pytest.raises(dr.RenderError, match="not inside a virtual environment"):
-        dr.render("launchd", "gateway", python=str(system),
-                  hal_home=str(_hal_checkout(tmp_path)), log_dir=str(tmp_path / "logs"))
+        dr.render(_HOST_PLATFORM, "gateway", python=str(system),
+                  hal_home=str(_hal_checkout(tmp_path)), log_dir=str(tmp_path / "logs"),
+                  user=WINDOWS["user"] if _HOST_PLATFORM == "schtasks" else None)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts on rendered systemd unit syntax "
+                                             "(ExecStart=), not just the "
+                                             "interpreter/checkout checks")
 def test_a_venv_interpreter_and_a_hal_checkout_are_accepted(tmp_path):
     require("deploy")
     python = _venv(tmp_path)
@@ -277,14 +285,16 @@ def test_a_venv_interpreter_and_a_hal_checkout_are_accepted(tmp_path):
 
 def test_a_missing_interpreter_is_refused(tmp_path):
     with pytest.raises(dr.RenderError, match="does not exist"):
-        dr.render("launchd", "wire", python=str(tmp_path / "venv" / "bin" / "python"),
-                  hal_home=str(_hal_checkout(tmp_path)), log_dir=str(tmp_path / "logs"))
+        dr.render(_HOST_PLATFORM, "wire", python=str(tmp_path / "venv" / "bin" / "python"),
+                  hal_home=str(_hal_checkout(tmp_path)), log_dir=str(tmp_path / "logs"),
+                  user=WINDOWS["user"] if _HOST_PLATFORM == "schtasks" else None)
 
 
 def test_a_directory_that_is_not_a_hal_checkout_is_refused(tmp_path):
     with pytest.raises(dr.RenderError, match="not a HAL checkout"):
-        dr.render("launchd", "wire", python=str(_venv(tmp_path)),
-                  hal_home=str(tmp_path / "empty"), log_dir=str(tmp_path / "logs"))
+        dr.render(_HOST_PLATFORM, "wire", python=str(_venv(tmp_path)),
+                  hal_home=str(tmp_path / "empty"), log_dir=str(tmp_path / "logs"),
+                  user=WINDOWS["user"] if _HOST_PLATFORM == "schtasks" else None)
 
 
 # --------------------------------------------------------------------------- #
@@ -413,8 +423,10 @@ def test_cli_refuses_an_option_the_service_would_drop(capsys, extra, message):
 def test_cli_refuses_a_system_interpreter_when_it_checks_paths(capsys, tmp_path):
     system = tmp_path / "python3"
     system.write_text("", encoding="utf-8")
-    argv = ["render", "--platform", "launchd", "--service", "wire", "--python", str(system),
+    argv = ["render", "--platform", _HOST_PLATFORM, "--service", "wire", "--python", str(system),
             "--hal-home", str(_hal_checkout(tmp_path)), "--log-dir", str(tmp_path)]
+    if _HOST_PLATFORM == "schtasks":
+        argv.extend(["--user", WINDOWS["user"]])
     assert dr.main(argv) == 2
     assert "virtual environment" in capsys.readouterr().err
 
@@ -455,6 +467,9 @@ def test_brain_template_keeps_the_promises_the_other_units_keep():
     assert names == BRAIN_ENV
 
 
+@pytest.mark.skipif(os.name == "nt", reason="asserts on rendered systemd unit syntax "
+                                             "(ExecStart=), not just the "
+                                             "interpreter/checkout checks")
 def test_brain_checks_the_interpreter_and_the_checkout_as_the_other_services_do(tmp_path):
     require("deploy")
     python, home = _venv(tmp_path), _hal_checkout(tmp_path)

@@ -28,7 +28,6 @@ voice.speak, voice.chat_loop) consume this module via the public
 """
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import hmac
 import json
@@ -41,6 +40,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+
+from lib.hal.file_lock import lock, unlock
 
 from .types import VoiceError
 
@@ -160,7 +161,7 @@ class AuditLogger:
     """HMAC-chained append-only JSONL audit log.
 
     Threading/multi-process: append() acquires an exclusive
-    ``fcntl.flock`` on the file before reading the last hmac AND
+    portable advisory lock on the file before reading the last hmac AND
     writing the new line, so two concurrent processes cannot produce a
     fork in the chain.
 
@@ -205,10 +206,10 @@ class AuditLogger:
     ) -> str:
         """Append a new record; return the generated audit_id."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        # Open in append mode; fcntl locks this specific fd so readers
+        # Open in append mode; the helper locks this specific fd so readers
         # (including our own _last_hmac inside the lock) are consistent.
         with self._path.open("a", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            lock(f)
             try:
                 first_write = f.tell() == 0
                 prev_hmac = (
@@ -232,7 +233,7 @@ class AuditLogger:
                 f.flush()
                 os.fsync(f.fileno())
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                unlock(f)
 
         if first_write and self._set_append_only:
             _set_append_only(self._path)

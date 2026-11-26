@@ -713,6 +713,43 @@ class _StreamState:
         return bool(self.reasoning or self.calls)
 
 
+def _block_text(block: Any) -> str:
+    """The text of one content block: a plain string, or a ``{"type": "text"}`` block."""
+    if isinstance(block, str):
+        return block
+    if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+        return block["text"]
+    return ""
+
+
+def _thinking_text(block: Any) -> str:
+    """The text inside one ``{"type": "thinking"}`` block, whose ``thinking`` is a
+    string or a list of text blocks."""
+    if not (isinstance(block, dict) and block.get("type") == "thinking"):
+        return ""
+    inner = block.get("thinking")
+    parts = inner if isinstance(inner, list) else [inner]
+    return "".join(_block_text(part) for part in parts)
+
+
+def _content_parts(content: Any) -> tuple[str, str]:
+    """``(answer, thinking)`` text from one delta's ``content``.
+
+    Most vendors stream ``content`` as a string. Mistral's reasoning models
+    (Mistral Large 4, measured 2026-11-26, HAL#898) stream a list of chunks:
+    ``{"type": "thinking", "thinking": [{"type": "text", "text": ...}]}`` while
+    they think, then ``{"type": "text", "text": ...}``. Passing that list on as
+    delta text handed every caller a list where a string belongs. Any other block
+    type carries no answer text and is left out.
+    """
+    if isinstance(content, str):
+        return content, ""
+    if not isinstance(content, list):
+        return "", ""
+    return ("".join(_block_text(block) for block in content),
+            "".join(_thinking_text(block) for block in content))
+
+
 def _translate_chunk(envelope_id: str, data: dict[str, Any], state: _StreamState) -> Iterator[str]:
     """Events for one SSE chunk, folding it into ``state``. Order on the wire
     (vendor guide): ``reasoning_content`` first, then ``content``, then
@@ -723,7 +760,11 @@ def _translate_chunk(envelope_id: str, data: dict[str, Any], state: _StreamState
     if reasoning:
         state.reasoning.append(reasoning)
         yield emit_thinking(envelope_id, reasoning)
-    text = delta.get("content")
+    text, thought = _content_parts(delta.get("content"))
+    if thought:
+        # Shown as thinking, but kept out of state.reasoning: that feeds the
+        # reasoning_content echo, which is the DeepSeek and Moonshot protocol.
+        yield emit_thinking(envelope_id, thought)
     if text:
         state.content.append(text)
         yield emit_delta(envelope_id, text)

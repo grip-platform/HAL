@@ -892,7 +892,7 @@ class Sessions:
         self.root.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=self.root, prefix='.w4-')
         try:
-            with os.fdopen(fd, 'w') as out:
+            with os.fdopen(fd, 'w', encoding='utf-8') as out:
                 json.dump(value, out)
                 out.flush()
                 os.fsync(out.fileno())
@@ -908,7 +908,7 @@ class Sessions:
         with self.lock:
             if session not in self.bindings:
                 try:
-                    value = json.loads(self._path(session).read_text())
+                    value = json.loads(self._path(session).read_text(encoding="utf-8"))
                     self.bindings[session] = value if isinstance(value, dict) and 'target' in value else {'invalid': True}
                 except FileNotFoundError:
                     return None
@@ -932,7 +932,7 @@ class Sessions:
         if not session:
             return False
         try:
-            value = json.loads(self._paused_path(session).read_text())
+            value = json.loads(self._paused_path(session).read_text(encoding="utf-8"))
             return bool(value.get('paused', False)) if isinstance(value, dict) else False
         except FileNotFoundError:
             return False

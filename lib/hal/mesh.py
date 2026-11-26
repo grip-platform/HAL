@@ -60,7 +60,7 @@ class MeshRegistry:
             "last_heartbeat": time.time(),
         }
         path = os.path.join(_MESH_DIR, f"{self._pid}.json")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(heartbeat, f)
 
     def discover_peers(self) -> list[PeerInfo]:
@@ -85,7 +85,7 @@ class MeshRegistry:
         }
         fname = f"{self._pid}-{peer_pid}-{int(time.time() * 1000)}.json"
         path = os.path.join(_MSG_DIR, fname)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(msg, f)
 
     def receive(self) -> list[dict]:
@@ -136,7 +136,7 @@ def _read_peer(path: str) -> PeerInfo:
 def _read_json(path: str) -> dict:
     """Read a JSON file, return empty dict on failure."""
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}

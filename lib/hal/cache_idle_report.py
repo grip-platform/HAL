@@ -1,5 +1,5 @@
 """HAL Cache Idle Report — offline analyser for prompt-cache idle patterns.
-Reads ~/.hal/state/hal/cache_calls.jsonl and classifies how often a cached
+Reads $HAL_HOME/state/hal/cache_calls.jsonl (default ~/.hal) and classifies how often a cached
 prefix resumes cold after the Anthropic ~5 min ephemeral TTL has expired.
 
 A "cold-after-idle resume" is defined as:
@@ -28,6 +28,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
+
+from lib.hal.home import hal_home
 
 # Anthropic ephemeral cache TTL (seconds) — lower bound of addressable gap
 _TTL_S = 300
@@ -87,7 +89,7 @@ def analyse(jsonl_path: Path | None = None) -> ReportData:
     cache_creation call relative to its nearest prior same-prefix call.
     """
     if jsonl_path is None:
-        jsonl_path = Path.home() / ".hal" / "state" / "hal" / "cache_calls.jsonl"
+        jsonl_path = hal_home() / "state" / "hal" / "cache_calls.jsonl"
 
     # Group records by prefix_hash preserving arrival order
     groups: dict[str, list[dict]] = {}

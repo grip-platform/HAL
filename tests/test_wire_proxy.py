@@ -614,6 +614,9 @@ def test_an_unreadable_egress_marker_still_brakes(wire, tmp_path, monkeypatch):
     assert (state["engaged"], state["detail"]) == (True, None)
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="chmod(0) fault injection does not deny directory traversal on Windows; "
+                           "it cannot produce the unstattable marker this test requires")
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
                     reason="root can inspect any path, so nothing is uncheckable")
 def test_an_egress_marker_that_cannot_be_checked_still_brakes(wire, tmp_path, monkeypatch):
@@ -1585,6 +1588,177 @@ def test_body_send_timeout_after_complete_delivery_closes_turn(monkeypatch):
     assert sent[-1] == payload
     key = wire_hold.turn_key(request.headers, TURN)
     assert not proxy._w4_attempts.reserve(key)
+
+
+def test_no_answer_records_the_transport_failure_detail():
+    """HAL#871: a transport failure during the send left no trace of why -- only
+    a Python debug line naming the exception's type, nothing in the audit log a
+    human or a later session could read. One ``wire.no_answer`` row now names
+    the stage that failed and the exception's own errno and message."""
+    from lib.hal import wire_cascade
+    payload = json.dumps(TURN).encode()
+    request = wire_proxy._parse_head(
+        f'POST /v1/messages HTTP/1.1\r\nContent-Length: {len(payload)}\r\n'
+        'x-claude-code-session-id: fake-session\r\n\r\n'.encode())
+    ex = wire_proxy._Exchange('POST', '/v1/messages', request.headers, time.monotonic(),
+                              body=wire_proxy._Copy(), wire_body=wire_proxy._Copy())
+    def send(data):
+        if data == payload:
+            raise ConnectionResetError(104, 'Connection reset by peer')
+    rows = []
+    proxy = SimpleNamespace(_w4_attempts=wire_cascade.Attempts(),
+                            _telemetry=GatewayTelemetry(sink=rows.append))
+    conn = SimpleNamespace(sock=SimpleNamespace(sendall=send))
+    client = wire_proxy._Stream(_CascadeSocket(payload))
+    assert wire_proxy.WireProxy._send_for_answer(proxy, client, conn, request, ex) is None
+    no_answer = [row for row in rows if row['event'] == 'wire.no_answer']
+    assert len(no_answer) == 1
+    assert no_answer[0]['stage'] == 'request_body'
+    assert no_answer[0]['exception'] == 'ConnectionResetError'
+    assert no_answer[0]['errno'] == 104
+    assert 'Connection reset' in no_answer[0]['reason']
+
+
+def test_no_answer_records_a_clean_close_with_no_exception_to_name():
+    """A connection that closes cleanly before any response byte raises nothing
+    -- ``_answer`` just returns ``None`` -- so before this fix NOTHING was
+    recorded, not even the debug line the exception path got. The row must
+    still appear, naming the stage with no exception to report."""
+    from lib.hal import wire_cascade
+    payload = json.dumps(TURN).encode()
+    request = wire_proxy._parse_head(
+        f'POST /v1/messages HTTP/1.1\r\nContent-Length: {len(payload)}\r\n'
+        'x-claude-code-session-id: fake-session\r\n\r\n'.encode())
+    ex = wire_proxy._Exchange('POST', '/v1/messages', request.headers, time.monotonic(),
+                              body=wire_proxy._Copy(), wire_body=wire_proxy._Copy())
+    rows = []
+    proxy = SimpleNamespace(_answer=lambda *a, **k: None, _w4_attempts=wire_cascade.Attempts(),
+                            _telemetry=GatewayTelemetry(sink=rows.append))
+    conn = SimpleNamespace(sock=SimpleNamespace(sendall=lambda *_: None))
+    client = wire_proxy._Stream(_CascadeSocket(payload))
+    assert wire_proxy.WireProxy._send_for_answer(proxy, client, conn, request, ex) is None
+    no_answer = [row for row in rows if row['event'] == 'wire.no_answer']
+    assert len(no_answer) == 1
+    assert no_answer[0]['stage'] == 'response_head'
+    assert 'exception' not in no_answer[0]
+    # HAL PR 930 review (xAI Grok 4.3): with nothing to report, the row
+    # carries only its timestamp and the two fields asserted above -- never
+    # an incidentally-added key nobody meant to record.
+    assert set(no_answer[0]) == {'ts', 'event', 'stage'}
+
+
+def test_no_answer_records_a_request_head_transport_failure_with_no_errno():
+    """HAL PR 930 review (Alibaba Qwen4-Max): every other no-answer test
+    fails during the body relay, so none exercises the earliest stage -- a
+    transport failure while sending the request head itself -- nor an
+    ``OSError`` with no ``errno`` to report (a plain ``OSError(message)``,
+    unlike a real socket error, never sets one)."""
+    from lib.hal import wire_cascade
+    payload = json.dumps(TURN).encode()
+    request = wire_proxy._parse_head(
+        f'POST /v1/messages HTTP/1.1\r\nContent-Length: {len(payload)}\r\n'
+        'x-claude-code-session-id: fake-session\r\n\r\n'.encode())
+    ex = wire_proxy._Exchange('POST', '/v1/messages', request.headers, time.monotonic(),
+                              body=wire_proxy._Copy(), wire_body=wire_proxy._Copy())
+    def send(_data):
+        raise OSError('the socket is not connected')
+    rows = []
+    proxy = SimpleNamespace(_w4_attempts=wire_cascade.Attempts(),
+                            _telemetry=GatewayTelemetry(sink=rows.append))
+    conn = SimpleNamespace(sock=SimpleNamespace(sendall=send))
+    client = wire_proxy._Stream(_CascadeSocket(payload))
+    assert wire_proxy.WireProxy._send_for_answer(proxy, client, conn, request, ex) is None
+    no_answer = [row for row in rows if row['event'] == 'wire.no_answer']
+    assert len(no_answer) == 1
+    assert no_answer[0]['stage'] == 'request_head'
+    assert no_answer[0]['exception'] == 'OSError'
+    assert 'the socket is not connected' in no_answer[0]['reason']
+    assert 'errno' not in no_answer[0]
+
+
+def test_no_answer_never_quotes_a_value_error_message():
+    """HAL PR 930 review: ``_record_no_answer``'s docstring promises never the
+    request or response body, but a ``ValueError`` from parsing a malformed
+    chunk size or Content-Length can quote the offending bytes verbatim in
+    its own message. Truncating that message to 200 chars caps the leak, it
+    does not prevent it -- only the exception's type may be recorded for a
+    ``ValueError``, never its message."""
+    from lib.hal import wire_cascade
+    payload = json.dumps(TURN).encode()
+    request = wire_proxy._parse_head(
+        f'POST /v1/messages HTTP/1.1\r\nContent-Length: {len(payload)}\r\n'
+        'x-claude-code-session-id: fake-session\r\n\r\n'.encode())
+    ex = wire_proxy._Exchange('POST', '/v1/messages', request.headers, time.monotonic(),
+                              body=wire_proxy._Copy(), wire_body=wire_proxy._Copy())
+    def send(data):
+        if data == payload:
+            raise ValueError("invalid literal for int() with base 16: b'SECRET-BODY-FRAGMENT'")
+    rows = []
+    proxy = SimpleNamespace(_w4_attempts=wire_cascade.Attempts(),
+                            _telemetry=GatewayTelemetry(sink=rows.append))
+    conn = SimpleNamespace(sock=SimpleNamespace(sendall=send))
+    client = wire_proxy._Stream(_CascadeSocket(payload))
+    assert wire_proxy.WireProxy._send_for_answer(proxy, client, conn, request, ex) is None
+    no_answer = [row for row in rows if row['event'] == 'wire.no_answer']
+    assert len(no_answer) == 1
+    assert no_answer[0]['exception'] == 'ValueError'
+    assert 'reason' not in no_answer[0]
+    assert 'SECRET-BODY-FRAGMENT' not in json.dumps(no_answer[0])
+
+
+def test_no_answer_never_quotes_a_wire_protocol_error_message():
+    """Same guarantee for ``_WireProtocolError``, the proxy's own wrapper
+    around a misframed stream: its message is never recorded, only its type
+    name -- a future raise site could embed the offending bytes same as a
+    raw ``ValueError`` can."""
+    from lib.hal import wire_cascade
+    payload = json.dumps(TURN).encode()
+    request = wire_proxy._parse_head(
+        f'POST /v1/messages HTTP/1.1\r\nContent-Length: {len(payload)}\r\n'
+        'x-claude-code-session-id: fake-session\r\n\r\n'.encode())
+    ex = wire_proxy._Exchange('POST', '/v1/messages', request.headers, time.monotonic(),
+                              body=wire_proxy._Copy(), wire_body=wire_proxy._Copy())
+    def send(data):
+        if data == payload:
+            raise wire_proxy._WireProtocolError(
+                "a malformed chunk size: b'SECRET-BODY-FRAGMENT'")
+    rows = []
+    proxy = SimpleNamespace(_w4_attempts=wire_cascade.Attempts(),
+                            _telemetry=GatewayTelemetry(sink=rows.append))
+    conn = SimpleNamespace(sock=SimpleNamespace(sendall=send))
+    client = wire_proxy._Stream(_CascadeSocket(payload))
+    assert wire_proxy.WireProxy._send_for_answer(proxy, client, conn, request, ex) is None
+    no_answer = [row for row in rows if row['event'] == 'wire.no_answer']
+    assert len(no_answer) == 1
+    assert no_answer[0]['exception'] == '_WireProtocolError'
+    assert 'reason' not in no_answer[0]
+    assert 'SECRET-BODY-FRAGMENT' not in json.dumps(no_answer[0])
+
+
+def test_no_answer_recording_failure_never_costs_the_client_its_503():
+    """HAL PR 930 review: a failing telemetry sink must never cost the client
+    its 503. Here the ``_telemetry`` object's own ``.record()`` raises
+    directly, so the call never reaches ``GatewayTelemetry``'s sink wrapper
+    at all -- this proves ``_record_no_answer``'s own try/except is what
+    holds, not merely a property of one telemetry implementation."""
+    from lib.hal import wire_cascade
+
+    class _RaisingTelemetry:
+        def record(self, event: dict) -> None:
+            raise RuntimeError('disk full')
+
+    payload = json.dumps(TURN).encode()
+    request = wire_proxy._parse_head(
+        f'POST /v1/messages HTTP/1.1\r\nContent-Length: {len(payload)}\r\n'
+        'x-claude-code-session-id: fake-session\r\n\r\n'.encode())
+    ex = wire_proxy._Exchange('POST', '/v1/messages', request.headers, time.monotonic(),
+                              body=wire_proxy._Copy(), wire_body=wire_proxy._Copy())
+    proxy = SimpleNamespace(_answer=lambda *a, **k: None, _w4_attempts=wire_cascade.Attempts(),
+                            _telemetry=_RaisingTelemetry())
+    conn = SimpleNamespace(sock=SimpleNamespace(sendall=lambda *_: None))
+    client = wire_proxy._Stream(_CascadeSocket(payload))
+    assert wire_proxy.WireProxy._send_for_answer(proxy, client, conn, request, ex) is None
+    assert client.sock.sent == [wire_proxy._NO_ANSWER]
 
 
 def test_client_body_ends_early_without_closing_turn():

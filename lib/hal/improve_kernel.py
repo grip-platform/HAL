@@ -40,9 +40,18 @@ Hypothesis H166 (2026-05-19): HAL ships the kernel with 100% API
 parity to GRIP's and a ≥12-test suite covering fingerprint
 determinism, cache hit, fixed-point detection, depth cap, and
 threshold pass/fail.
+
+The fixed-point registry is shared on disk, so each line carries the caller's
+namespace (by default the converge function's module and qualified name), and a
+kernel honours only its own namespace's lines. Without that, one caller's end
+state stopped another caller's start (GRIP#9966, GRIP#10030): an AGORA sitting
+that seated nobody registered ``fingerprint({})``, and every later run starting
+from ``{}`` stopped at once. This copy keeps its registry under ``$HAL_HOME``;
+``lib/improve_kernel.py`` keeps its own under ``~/.claude``, the file GRIP's kernel writes.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -114,6 +123,24 @@ def fingerprint(state) -> str:
     return hashlib.sha256(raw).hexdigest()[:16]
 
 
+def _default_namespace(converge) -> str:
+    """The converge function's module and qualified name, its identity in the registry.
+
+    A line written before namespaces existed carries none, so it is never honoured;
+    the cost is one re-run of that state. A ``functools.partial`` is named by the
+    function it wraps, so two partials of different functions never share a bucket.
+    Two partials of the SAME function with different arguments do share one; a
+    caller whose arguments change the outcome passes ``namespace=`` instead.
+    """
+    target = converge
+    while isinstance(target, functools.partial):
+        target = target.func
+    target = getattr(target, "__func__", target)
+    module = getattr(target, "__module__", None) or type(target).__module__
+    name = getattr(target, "__qualname__", None) or type(target).__qualname__
+    return f"{module}.{name}"
+
+
 class InnerspeakerGo(Generic[T]):
     """Recursive improvement loop with LRU cache + fixed-point registry.
 
@@ -129,10 +156,13 @@ class InnerspeakerGo(Generic[T]):
         max_depth: int = DEFAULT_MAX_DEPTH,
         fixed_points_path: Optional[Path] = None,
         telemetry_path: Optional[Path] = None,
+        namespace: Optional[str] = None,
     ) -> None:
         self.converge = converge
         self.threshold = threshold
         self.max_depth = max_depth
+        #: Whose fixed points this kernel honours and writes; see the module docstring.
+        self._namespace = namespace if namespace is not None else _default_namespace(converge)
         self._fixed_points_path = fixed_points_path or default_fixed_points_path()
         self._telemetry_path = telemetry_path or default_telemetry_path()
         self._cache: dict[str, ImproveResult[T]] = {}
@@ -181,8 +211,10 @@ class InnerspeakerGo(Generic[T]):
             if not line:
                 continue
             try:
-                fps.add(json.loads(line)["fingerprint"])
-            except (json.JSONDecodeError, KeyError):
+                record = json.loads(line)
+                if record.get("namespace") == self._namespace:
+                    fps.add(record["fingerprint"])
+            except (json.JSONDecodeError, KeyError, AttributeError, TypeError):
                 continue
         return fps
 
@@ -192,7 +224,7 @@ class InnerspeakerGo(Generic[T]):
 
     def _persist_fixed_point(self, fp: str) -> None:
         self._fixed_points_path.parent.mkdir(parents=True, exist_ok=True)
-        record = {"fingerprint": fp, "ts": _now()}
+        record = {"fingerprint": fp, "namespace": self._namespace, "ts": _now()}
         with self._fixed_points_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
 

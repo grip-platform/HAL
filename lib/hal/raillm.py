@@ -218,7 +218,9 @@ DEFAULT_EQUIVALENCE_MAP: dict[ModelTier, ModelEquivalenceClass] = {
     ModelTier.FRONTIER: ModelEquivalenceClass(
         tier=ModelTier.FRONTIER,
         members=[
-            "gemini/gemini-3.1-pro-preview",
+            # Carbon replaced gemini-3.1-pro-preview here on 2026-11-26 as a seat
+            # move (V>>), not a retirement: 3.1 Pro is still served and priced.
+            "gemini/gemini-4-carbon",
             "openai/gpt-4o",
             "deepseek/deepseek-reasoner",
         ],

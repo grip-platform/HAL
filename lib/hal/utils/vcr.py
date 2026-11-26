@@ -51,7 +51,7 @@ def _fixture_path(request_body: str) -> Path:
 def _replay(path: Path):
     from lib.hal.types import ChatResponse, TokenUsage
 
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     usage = data.get("usage", {})
     return ChatResponse(
         text=data.get("text", ""),
@@ -87,7 +87,7 @@ def _record(path: Path, response) -> None:
         "latency_ms": response.latency_ms,
         "raw": response.raw,
     }
-    path.write_text(json.dumps(payload, indent=2))
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def with_vcr(fn, *, request_body: str):

@@ -35,6 +35,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from tests._platform import can_create_symlinks
+
 from lib.hal.file_sandbox import SandboxRootRefused  # noqa: E402
 from lib.hal.sandboxed_tool_dispatch import (  # noqa: E402
     SandboxedDispatcher,
@@ -257,6 +259,11 @@ class TestSandboxEscapeThroughDispatcher(_TmpSandbox):
         """T14b — Mutation: drop the realpath resolution → a symlink
         pointing at /etc/passwd returns host content. Survives by
         asserting blocked when a symlink leaves the sandbox."""
+        if not can_create_symlinks():
+            self.skipTest(
+                "this host cannot create symlinks without an "
+                "elevated/Developer-Mode privilege"
+            )
         outside = Path(tempfile.mkdtemp())
         try:
             target = outside / "secret.txt"

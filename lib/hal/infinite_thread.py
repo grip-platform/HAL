@@ -50,13 +50,13 @@ today). A subagent writes under its own session id and names its parent in
 ``parent_session_id``, so its rows chain in their own thread and never
 interleave with the parent's.
 
-**Concurrency.** One whole line per ``O_APPEND`` write, under an advisory
-``fcntl.flock`` on the thread file. Before each append the last line is
+**Concurrency.** One whole line per ``O_APPEND`` write, under a portable advisory
+lock on the thread file. Before each append the last line is
 checked; a torn one (no newline, not JSON, or a ``prev`` that does not match)
 is moved to ``<id>.torn`` and logged. The head file advances by
 compare-and-set (a temporary file, then ``os.replace``) and never moves
 backwards, and a thread whose head names a row the file no longer holds is not
-extended. POSIX only: Windows hosts arrive with Step 6.
+extended. POSIX and Windows use the same lock protocol.
 
 **What verification can and cannot show.** ``verify_thread`` captures the head
 before reading rows, walks every complete row with pinned public keys only,
@@ -94,10 +94,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Tuple
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - Windows: the store refuses to write there
-    fcntl = None  # type: ignore[assignment]
+from lib.hal.file_lock import lock, unlock
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +127,8 @@ _SESSION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _HOST_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 _THREAD_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 _TAIL_CHUNK = 16384
+# Canonical rows and tail offsets require untranslated bytes on Windows.
+_BINARY = getattr(os, "O_BINARY", 0)
 
 Signer = Callable[[bytes], dict]
 Failure = Tuple[Optional[int], str]
@@ -295,23 +294,34 @@ def _stamp(moment: float) -> str:
     return datetime.fromtimestamp(moment, timezone.utc).strftime("%Y-%m-%dT%H%M%S.%fZ")
 
 
+def _stamp_moment(name: str) -> Optional[float]:
+    """The moment a snapshot name ``<_stamp>.json`` stands for, or None."""
+    try:
+        when = datetime.strptime(name[:-len(".json")], "%Y-%m-%dT%H%M%S.%fZ")
+    except ValueError:
+        return None
+    return when.replace(tzinfo=timezone.utc).timestamp()
+
+
 @contextlib.contextmanager
 def _flocked(path: Path, *, create: bool = True) -> Iterator[int]:
     """Hold an exclusive advisory lock on ``path`` for the block; yield its fd."""
-    if fcntl is None:
-        raise StoreRefused("this platform has no fcntl advisory locks")
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_RDWR | os.O_APPEND | (os.O_CREAT if create else 0)
     try:
-        fd = os.open(path, flags, 0o644)
+        fd = os.open(path, flags | _BINARY, 0o644)
     except FileNotFoundError as exc:
         raise StoreRefused(f"{path.name} is missing") from exc
+    held = False
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        lock(fd)
+        held = True
         yield fd
     finally:
-        os.close(fd)  # closing the descriptor releases the lock
+        if held:
+            unlock(fd)
+        os.close(fd)
 
 
 def _write_all(fd: int, data: bytes) -> None:
@@ -327,13 +337,44 @@ def _atomic_write(path: Path, data: bytes) -> None:
     """Write ``data`` whole or not at all: temporary file, fsync, ``os.replace``."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _BINARY, 0o644)
     try:
         _write_all(fd, data)
         os.fsync(fd)
     finally:
         os.close(fd)
     os.replace(tmp, path)
+
+
+def _publish_new(path: Path, data: bytes) -> bool:
+    """Publish ``data`` whole at ``path``, unless the name is taken: never replaces.
+
+    The bytes go to a temporary file first and a hard link then names them, so
+    a reader sees the whole file or none, and ``os.link`` refuses a name in use.
+    Where hard links are unsupported (FAT, some network shares) it falls back
+    to ``os.replace`` after a fresh check, which narrows the race to that gap.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _BINARY, 0o644)
+    try:
+        _write_all(fd, data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        os.link(tmp, path)
+    except FileExistsError:
+        published = False
+    except OSError:
+        published = not path.exists()
+        if published:
+            os.replace(tmp, path)
+    else:
+        published = True
+    if tmp.exists():
+        os.unlink(tmp)
+    return published
 
 
 def _read_json(path: Path) -> Optional[dict]:
@@ -358,6 +399,16 @@ def _is_count(value: Any) -> bool:
 
 # --- the tail of a thread file --------------------------------------------------
 
+def _pread(fd: int, size: int, offset: int) -> bytes:
+    """A positioned read that never disturbs the descriptor's seek position."""
+    position = os.lseek(fd, 0, os.SEEK_CUR)
+    try:
+        os.lseek(fd, offset, os.SEEK_SET)
+        return os.read(fd, size)
+    finally:
+        os.lseek(fd, position, os.SEEK_SET)
+
+
 def _tail_lines(fd: int, size: int, want: int = 2) -> List[Tuple[int, bytes]]:
     """The last ``want`` lines as ``(offset, bytes)``, oldest first.
 
@@ -367,7 +418,7 @@ def _tail_lines(fd: int, size: int, want: int = 2) -> List[Tuple[int, bytes]]:
     while pos > 0 and _newlines_before_end(buf) < want:
         step = min(_TAIL_CHUNK, pos)
         pos -= step
-        buf = os.pread(fd, step, pos) + buf
+        buf = _pread(fd, step, pos) + buf
     lines, offset = [], pos
     for piece in _with_newlines(buf):
         lines.append((offset, piece))
@@ -479,6 +530,9 @@ def heads_snapshot(root: Optional[Path] = None) -> Dict[str, dict]:
     return heads
 
 
+_ANCHOR_LOCK = threading.Lock()
+
+
 def anchor_heads(root: Optional[Path] = None, *,
                  anchor: Optional[Callable[[bytes], dict]] = None,
                  clock: Callable[[], float] = time.time) -> dict:
@@ -492,12 +546,30 @@ def anchor_heads(root: Optional[Path] = None, *,
     network call is made beyond the authority, and none at all unless
     ``GRIP_TSA_URL`` is set.
     """
-    root, now = _root(root), clock()
-    snapshot = {"v": SNAPSHOT_VERSION, "host": host_label(root), "taken_at": _iso(now),
-                "heads": heads_snapshot(root)}
-    digest = hashlib.sha256(canonical(snapshot))
-    path = root / "heads" / f"{_stamp(now)}.json"
-    _atomic_write(path, canonical({"sha256": digest.hexdigest(), "snapshot": snapshot}))
+    root = _root(root)
+    heads_dir = root / "heads"
+    # Name order is the verifier's chronology (_snapshots, _snapshot_check), so
+    # the clock read, the heads capture and the name claim happen under one
+    # lock, and a name always sorts after every snapshot already present. A
+    # coarse clock (time.time on Python 3.12 for Windows moves in ~15.6 ms
+    # steps), a clock stepped back, or an overlapping call would otherwise give
+    # a stale capture a name at or after a newer one. _publish_new claims the
+    # name atomically and never replaces, as a second line of defence.
+    with _ANCHOR_LOCK, _flocked(heads_dir / ".anchor.lock"):
+        now = clock()
+        existing = _snapshots(heads_dir)
+        floor = _stamp_moment(existing[0].name) if existing else None
+        if floor is not None and now <= floor:
+            now = floor + 1e-6
+        host, heads = host_label(root), heads_snapshot(root)
+        while True:
+            snapshot = {"v": SNAPSHOT_VERSION, "host": host, "taken_at": _iso(now),
+                        "heads": heads}
+            digest = hashlib.sha256(canonical(snapshot))
+            path = heads_dir / f"{_stamp(now)}.json"
+            if _publish_new(path, canonical({"sha256": digest.hexdigest(), "snapshot": snapshot})):
+                break
+            now += 1e-6
     result = (anchor or grip_anchor)(digest.digest())
     _atomic_write(_tsa_path(path),
                   json.dumps(result, sort_keys=True, default=str).encode("utf-8"))

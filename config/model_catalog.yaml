@@ -528,8 +528,33 @@ models:
       Google's Gemini 4 generation workhorse, read from
       aistudio.google.com/docs/models/gemini-4-hydrogen and .../changelog on 2026-11-24.
       $1.50 in / $7.50 out / $0.075 cached per 1M tokens, flat (no dated change).
-      Free tier available; implicit caching only. Listed, not a default: no
-      chain, pin, or seat names it.
+      Free tier available; implicit caching only. Not a default: no chain, pin,
+      or seat names it. Its one automatic use, since 2026-11-26, is the gateway
+      council's fail-open model (V>>, the single exception to model-dogfood
+      decision 6; pinned by tests/test_gemini_catalogue_parity.py).
+
+  # Gemini 4 Neon, onboarded 2026-11-26 through /dogfood-domain. Facts read from
+  # ai.google.dev/gemini-api/docs/models/gemini-4-neon, .../pricing and
+  # .../changelog, plus deepmind.google/models/model-cards/gemini-4-neon/ for the
+  # knowledge cutoff, all on 2026-11-26. Served and working on GRIP's key the
+  # same day (one call answered from 'gemini-4-neon', finish_reason stop).
+  - address: gemini/gemini-4-neon
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 1048576
+    tags: [frontier, reasoning, coding, agentic, science, long-context, vision, audio, video]
+    strengths:
+      - GA 2026-11-18 (vendor changelog); knowledge cutoff March 2026 (model card)
+      - 1,048,576-token window shared by input and output; 65,536 output tokens by default
+      - Thinking levels low / medium / high (default) / xhigh; input text, image, video, audio, PDF
+    description: >
+      Google's Gemini 4 generation model between Hydrogen and Carbon, "frontier-level
+      intelligence with fast end-to-end task completion", read from
+      ai.google.dev/gemini-api/docs/models/gemini-4-neon on 2026-11-26. $3.00 in /
+      $15.00 out / $0.15 cached per 1M tokens, flat (no dated change). Not on the
+      Free tier; implicit caching only. Listed, not a default: no chain, pin, or
+      seat names it.
 
   - address: openai/gpt-6.2-astra
     tier: frontier

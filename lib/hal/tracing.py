@@ -35,9 +35,12 @@ class Span:
     attributes: dict = field(default_factory=dict)
     status: str = "ok"  # "ok", "error"
     error_message: str = ""
+    _elapsed_ms: float | None = field(default=None, repr=False, compare=False)
 
     @property
     def duration_ms(self) -> float:
+        if self._elapsed_ms is not None:
+            return self._elapsed_ms
         return (self.end_time - self.start_time) * 1000
 
     def set_attribute(self, key: str, value: object) -> None:
@@ -84,6 +87,7 @@ class Tracer:
     def span(self, name: str, **attributes):
         """Context manager that creates and records a span."""
         self._span_counter += 1
+        elapsed_start = time.perf_counter()
         s = Span(
             name=name,
             trace_id=self._trace_id,
@@ -97,7 +101,12 @@ class Tracer:
             s.set_error(str(e)[:200])
             raise
         finally:
-            s.end_time = time.time()
+            s._elapsed_ms = (time.perf_counter() - elapsed_start) * 1000
+            # Derive the end from the measured interval. On a coarse wall clock
+            # (Python 3.12 on Windows, steps of about 15.6 ms) a second time.time()
+            # read can equal the first, and the exported timestamps would then
+            # disagree with duration_ms.
+            s.end_time = s.start_time + s._elapsed_ms / 1000
             self._spans.append(s)
 
     def record(self, name: str, duration_ms: float = 0, **attributes) -> Span:
@@ -111,6 +120,7 @@ class Tracer:
             start_time=now - (duration_ms / 1000),
             end_time=now,
             attributes=dict(attributes),
+            _elapsed_ms=float(duration_ms),
         )
         self._spans.append(s)
         return s
@@ -139,6 +149,6 @@ class Tracer:
             "spans": [s.to_dict() for s in self._spans],
             "summary": self.summary(),
         }
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return path

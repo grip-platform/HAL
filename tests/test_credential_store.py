@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+import unittest.mock
 
 from lib.hal.credential_store import CredentialInfo, CredentialStore, _env_var_name, _mask
 

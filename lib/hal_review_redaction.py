@@ -74,13 +74,19 @@ def _from_env(env: dict) -> rs.Denylist | None:
         data = base64.b64decode(raw)
     except (binascii.Error, ValueError):
         return None
-    with tempfile.NamedTemporaryFile(suffix=".json") as handle:
+    handle = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+    try:
         handle.write(data)
-        handle.flush()
+        handle.close()
+        return _with_names(rs.load_denylist(Path(handle.name)))
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError):
+        return None  # a malformed secret falls through to the next source
+    finally:
+        handle.close()
         try:
-            return _with_names(rs.load_denylist(Path(handle.name)))
-        except (OSError, RuntimeError, ValueError, KeyError, TypeError):
-            return None  # a malformed secret falls through to the next source
+            os.unlink(handle.name)
+        except OSError:
+            pass
 
 
 def _from_files() -> rs.Denylist | None:

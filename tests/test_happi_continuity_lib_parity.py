@@ -39,9 +39,15 @@ from lib.hal.happi import (
 )
 from lib.hal.happi.context import normalise_kind
 from tests._canonical_version import canonical_runtime_version
+from tests._bash import find_bash
 
 REPO = Path(__file__).resolve().parents[1]
 HAPPI = REPO / "happi.md"
+_BASH = find_bash()
+pytestmark = pytest.mark.skipif(
+    _BASH is None,
+    reason="no usable bash found on this machine (install Git Bash on Windows)",
+)
 
 _VOLATILE = ("id", "ts", "audit")
 _BODY = {
@@ -70,7 +76,7 @@ def _polyglot_continuity_ref(body: dict, **flags) -> dict:
     envelope = {"v": "happi/1.4", "id": "parity", "cmd": "continuity.append",
                 "args": [json.dumps(body)], "flags": flags}
     proc = subprocess.run(
-        ["bash", str(HAPPI), "run"],
+        [_BASH, str(HAPPI), "run"],
         input=json.dumps(envelope), capture_output=True, text=True,
         cwd=str(REPO), timeout=60,
     )

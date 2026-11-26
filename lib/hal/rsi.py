@@ -208,7 +208,7 @@ class RSIEngine:
     def _load_patterns(self) -> None:
         """Load pattern store from disk."""
         try:
-            with open(_PATTERNS_PATH, "r") as f:
+            with open(_PATTERNS_PATH, "r", encoding="utf-8") as f:
                 self._patterns = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             self._patterns = {}
@@ -216,7 +216,7 @@ class RSIEngine:
     def _save_patterns(self) -> None:
         """Persist pattern store to disk."""
         os.makedirs(os.path.dirname(_PATTERNS_PATH), exist_ok=True)
-        with open(_PATTERNS_PATH, "w") as f:
+        with open(_PATTERNS_PATH, "w", encoding="utf-8") as f:
             json.dump(self._patterns, f, indent=2)
 
 

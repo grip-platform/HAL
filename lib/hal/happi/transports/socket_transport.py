@@ -32,7 +32,8 @@ from __future__ import annotations
 
 import os
 import socketserver
-from typing import Type
+import sys
+from typing import Any, Type, cast
 
 from lib.hal.happi.envelope import EnvelopeError, HappiEnvelope
 from lib.hal.happi.events import emit_error
@@ -86,12 +87,30 @@ class HappiSocketHandler(socketserver.StreamRequestHandler):
             pass
 
 
-class ThreadingUnixStreamServer(
-    socketserver.ThreadingMixIn, socketserver.UnixStreamServer
-):
-    """Per-connection threading over AF_UNIX stream."""
-    daemon_threads = True
-    allow_reuse_address = True
+if hasattr(socketserver, "UnixStreamServer"):
+    class ThreadingUnixStreamServer(
+        socketserver.ThreadingMixIn, socketserver.UnixStreamServer
+    ):
+        """Per-connection threading over AF_UNIX stream."""
+        daemon_threads = True
+        allow_reuse_address = True
+else:
+    ThreadingUnixStreamServer = None
+
+
+def _require_unix_sockets() -> None:
+    if ThreadingUnixStreamServer is None:
+        raise RuntimeError(
+            f"AF_UNIX socket transport is unavailable on {sys.platform}; "
+            "use the stdio transport or the HTTP transport in http_transport.py"
+        )
+
+
+def _resolve_server_class(server_class: Type[Any] | None) -> Type[Any]:
+    resolved = server_class if server_class is not None else ThreadingUnixStreamServer
+    if resolved is None:
+        _require_unix_sockets()
+    return cast(Type[Any], resolved)
 
 
 def _unlink_if_exists(path: str) -> None:
@@ -103,22 +122,24 @@ def _unlink_if_exists(path: str) -> None:
 
 def build_socket_server(
     socket_path: str = DEFAULT_SOCKET_PATH,
-    server_class: Type[ThreadingUnixStreamServer] = ThreadingUnixStreamServer,
-) -> ThreadingUnixStreamServer:
+    server_class: Type[Any] | None = None,
+) -> Any:
     """Construct (and bind) a socket server without starting its loop.
 
     Any stale socket file at `socket_path` is unlinked first — required
     for AF_UNIX bind to succeed on restart.
     """
+    server_class = _resolve_server_class(server_class)
     _unlink_if_exists(socket_path)
     return server_class(socket_path, HappiSocketHandler)
 
 
 def serve_socket(
     socket_path: str = DEFAULT_SOCKET_PATH,
-    server_class: Type[ThreadingUnixStreamServer] = ThreadingUnixStreamServer,
+    server_class: Type[Any] | None = None,
 ) -> None:
     """Block and serve HAPPI requests on `socket_path` until interrupted."""
+    server_class = _resolve_server_class(server_class)
     server = build_socket_server(socket_path, server_class)
     try:
         server.serve_forever()

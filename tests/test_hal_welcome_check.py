@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -45,6 +46,10 @@ def test_hal_bin_present_and_executable_is_ok(tmp_path):
     assert "executable" in result.detail
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="Windows os.access(X_OK) has no POSIX executable "
+                           "bit; an existing regular file always reads as "
+                           "executable there")
 def test_hal_bin_present_but_not_executable_fails(tmp_path):
     hal_bin = tmp_path / "hal"
     hal_bin.write_text("#!/bin/bash\n", encoding="utf-8")

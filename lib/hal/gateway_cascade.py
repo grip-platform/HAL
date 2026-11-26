@@ -40,7 +40,7 @@ def configured_targets() -> list[str | Target]:
     """Select exact product bindings or known legacy ladder addresses."""
     try:
         path = Path(os.environ.get('HAL_W4_CONFIG', str(CONFIG)))
-        entries = json.loads(path.read_text())['targets']
+        entries = json.loads(path.read_text(encoding="utf-8"))['targets']
         if not isinstance(entries, list):
             return []
         legacy = [entry for entry in entries if isinstance(entry, str)]

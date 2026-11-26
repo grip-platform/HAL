@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
+from collections import namedtuple
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +23,17 @@ import pytest
 _HAL_HOME = os.environ.get("HAL_ROOT", os.path.expanduser("~/.hal"))
 if _HAL_HOME not in sys.path:
     sys.path.insert(0, _HAL_HOME)
+
+# A bare (major, minor) tuple compares and slices like sys.version_info, but
+# has no .major/.minor attributes -- fine for happi_boot.check_prerequisites
+# (which only slices [:2]), an AttributeError trap for a check that reads
+# .major/.minor instead (AGORA, qwen4-max, PR #946 round 2). This stub shapes
+# like the real structseq so the same patching pattern is safe everywhere.
+_FakeVersion = namedtuple("_FakeVersion", "major minor micro releaselevel serial")
+
+
+def _fake_version(major: int, minor: int) -> _FakeVersion:
+    return _FakeVersion(major, minor, 0, "final", 0)
 
 from lib.hal.happi_boot import (
     BootstrapResult,
@@ -49,7 +60,7 @@ class TestCheckPrerequisites:
 
     def test_python_check_passes_current_version(self, tmp_path):
         checks = {c.name: c for c in check_prerequisites(tmp_path)}
-        assert checks["python"].ok, "Current Python should satisfy >= 3.10"
+        assert checks["python"].ok, "Current Python should satisfy >= 3.11"
 
     def test_python_check_reflects_version_string(self, tmp_path):
         checks = {c.name: c for c in check_prerequisites(tmp_path)}
@@ -84,6 +95,30 @@ class TestCheckPrerequisites:
         assert hasattr(check, "required")
         assert hasattr(check, "found")
         assert hasattr(check, "ok")
+
+    @pytest.mark.parametrize(
+        "version, expected_ok",
+        [
+            (_fake_version(3, 9), False),
+            (_fake_version(3, 10), False),
+            (_fake_version(3, 11), True),
+            (_fake_version(3, 12), True),
+        ],
+    )
+    def test_python_floor_is_3_11(self, tmp_path, version, expected_ok):
+        """V>> raised HAL's floor to 3.11 on 2026-11-26 (HAL#929): HAPPI's
+        own bootstrap checker must refuse 3.10, not just 3.9, because
+        lib/hal/utils/cch.py imports tomllib (3.11+, no fallback). Mutation:
+        put _MIN_PYTHON back to (3, 10) -> the (3, 10) case flips to True ->
+        RED. The stub is namedtuple-shaped (not a bare tuple) so the same
+        sys.version_info patching pattern is also safe for a check that reads
+        .major/.minor, such as lib.hal.diagnostic's (AGORA, qwen4-max,
+        PR #946 round 2).
+        """
+        with patch("sys.version_info", version):
+            checks = {c.name: c for c in check_prerequisites(tmp_path)}
+        assert checks["python"].ok is expected_ok
+        assert checks["python"].required == ">= 3.11"
 
 
 # ---------------------------------------------------------------------------
@@ -131,14 +166,14 @@ class TestCheckApiKeys:
 class TestBootstrapResult:
     def _ok_prereqs(self):
         return [
-            PrerequisiteCheck("python", ">= 3.10", "3.11", True),
+            PrerequisiteCheck("python", ">= 3.11", "3.11", True),
             PrerequisiteCheck("pip", "available", "present", True),
             PrerequisiteCheck("git", "available", "/usr/bin/git", True),
         ]
 
     def _bad_prereqs(self):
         return [
-            PrerequisiteCheck("python", ">= 3.10", "3.9", False),
+            PrerequisiteCheck("python", ">= 3.11", "3.9", False),
             PrerequisiteCheck("pip", "available", "present", True),
             PrerequisiteCheck("git", "available", "not found", False),
         ]
@@ -213,7 +248,7 @@ class TestBootstrapHal:
     def test_dry_run_fresh_machine_not_ok_when_prereqs_fail(self, tmp_path):
         non_existent = tmp_path / "fresh_hal"
         bad_checks = [
-            PrerequisiteCheck("python", ">= 3.10", "3.9", False),
+            PrerequisiteCheck("python", ">= 3.11", "3.9", False),
             PrerequisiteCheck("pip", "available", "present", True),
             PrerequisiteCheck("git", "available", "not found", False),
         ]
@@ -225,7 +260,7 @@ class TestBootstrapHal:
     def test_missing_prereqs_adds_error(self, tmp_path):
         non_existent = tmp_path / "fresh_hal"
         bad_checks = [
-            PrerequisiteCheck("python", ">= 3.10", "3.9", False),
+            PrerequisiteCheck("python", ">= 3.11", "3.9", False),
             PrerequisiteCheck("pip", "available", "present", True),
             PrerequisiteCheck("git", "available", "not found", False),
         ]
@@ -238,7 +273,7 @@ class TestBootstrapHal:
     def test_successful_fresh_install_calls_git_and_pip(self, tmp_path):
         non_existent = tmp_path / "fresh_hal"
         ok_checks = [
-            PrerequisiteCheck("python", ">= 3.10", "3.11", True),
+            PrerequisiteCheck("python", ">= 3.11", "3.11", True),
             PrerequisiteCheck("pip", "available", "present", True),
             PrerequisiteCheck("git", "available", "/usr/bin/git", True),
         ]
@@ -254,7 +289,7 @@ class TestBootstrapHal:
     def test_git_clone_failure_recorded_in_errors(self, tmp_path):
         non_existent = tmp_path / "fresh_hal"
         ok_checks = [
-            PrerequisiteCheck("python", ">= 3.10", "3.11", True),
+            PrerequisiteCheck("python", ">= 3.11", "3.11", True),
             PrerequisiteCheck("pip", "available", "present", True),
             PrerequisiteCheck("git", "available", "/usr/bin/git", True),
         ]
@@ -267,7 +302,7 @@ class TestBootstrapHal:
     def test_pip_failure_recorded_in_errors(self, tmp_path):
         non_existent = tmp_path / "fresh_hal"
         ok_checks = [
-            PrerequisiteCheck("python", ">= 3.10", "3.11", True),
+            PrerequisiteCheck("python", ">= 3.11", "3.11", True),
             PrerequisiteCheck("pip", "available", "present", True),
             PrerequisiteCheck("git", "available", "/usr/bin/git", True),
         ]
@@ -299,16 +334,33 @@ class TestBootstrapHal:
 # 5. validate_polyglot — HAPPI.md stays valid bash + Markdown
 # ---------------------------------------------------------------------------
 
+# The tracked name, exactly. These tests looked for "HAPPI.md" while git tracks
+# "happi.md", so on a case-sensitive file system (Linux CI) every one of them
+# skipped (HAL#950).
+_HAPPI_NAME = "happi.md"
+
+
 class TestValidatePolyglot:
     def _happi_path(self) -> Path:
         candidates = [
-            Path(os.environ.get("HAL_ROOT", "~/.hal")).expanduser() / "HAPPI.md",
-            Path(__file__).parent.parent / "HAPPI.md",
+            Path(os.environ.get("HAL_ROOT", "~/.hal")).expanduser() / _HAPPI_NAME,
+            Path(__file__).parent.parent / _HAPPI_NAME,
         ]
         for p in candidates:
             if p.exists():
                 return p
-        pytest.skip("HAPPI.md not found")
+        pytest.skip(f"{_HAPPI_NAME} not found")
+
+    def test_the_spec_name_is_the_tracked_name(self):
+        """HAL#950: the name these tests use must be the file git tracks, with its
+        exact case, or they skip on Linux. git ls-files matches a pathspec by case.
+        Mutation: set _HAPPI_NAME back to "HAPPI.md" -> RED."""
+        import subprocess
+        tracked = subprocess.run(
+            ["git", "ls-files", "--", _HAPPI_NAME], cwd=Path(__file__).parent.parent,
+            capture_output=True, text=True, check=True,
+        ).stdout.split()
+        assert tracked == [_HAPPI_NAME], tracked
 
     def test_has_bash_shebang(self):
         result = validate_polyglot(self._happi_path())

@@ -1,6 +1,4 @@
 """Tests for HAL Concurrent Tool Executor."""
-import os
-import sys
 import time
 import unittest
 
@@ -30,7 +28,7 @@ class _SlowRead(ToolProtocol):
     @property
     def is_concurrent_safe(self): return True
     def execute(self, inp, ctx):
-        time.sleep(0.05)
+        time.sleep(0.2)
         return ToolOutput(content="slow-done")
 
 
@@ -134,15 +132,21 @@ class TestToolExecutorBatch(unittest.TestCase):
         results = executor.execute_batch([], ToolContext())
         self.assertEqual(results, [])
 
-    def test_parallel_is_faster_than_serial(self):
-        """Two SlowRead tools (50ms each) should complete in ~50ms parallel, not ~100ms."""
+    def test_parallel_execution_intervals_overlap(self):
+        """Two SlowRead tools (200ms each) should run with overlapping execution
+        windows, not one strictly after the other."""
         executor = ToolExecutor(tools=[_SlowRead()])
         ctx = ToolContext()
-        start = time.monotonic()
-        executor.execute_batch([("SlowRead", {}), ("SlowRead", {})], ctx)
-        elapsed = (time.monotonic() - start) * 1000
-        # Parallel: ~50ms. Serial would be ~100ms. Allow margin.
-        self.assertLess(elapsed, 90)
+        results = executor.execute_batch([("SlowRead", {}), ("SlowRead", {})], ctx)
+        first, second = results[0], results[1]
+        self.assertEqual(first.state, ToolState.COMPLETED)
+        self.assertEqual(second.state, ToolState.COMPLETED)
+        overlap_start = max(first.started_at, second.started_at)
+        overlap_end = min(first.completed_at, second.completed_at)
+        self.assertGreater(
+            overlap_end, overlap_start,
+            f"SlowRead calls should overlap, not run serially: {first.to_dict()} vs {second.to_dict()}",
+        )
 
 
 class TestToolExecutorRegistry(unittest.TestCase):

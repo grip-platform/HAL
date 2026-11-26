@@ -316,6 +316,8 @@ def test_auto_generated_key_has_restrictive_mode(tmp_path: Path) -> None:
     )
     key_path = log_path.parent / "audit.key"
     assert key_path.exists()
+    if sys.platform == "win32":
+        pytest.skip("POSIX mode bits do not restrict access on Windows")
     mode = key_path.stat().st_mode & 0o777
     assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
 

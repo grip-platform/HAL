@@ -42,7 +42,7 @@ requests-per-minute, not content length):
 - State: ``~/.hal/state/voice/gemini_tts_rpm.jsonl`` (one record per
   successful reservation, ``{"ts": ISO8601, "ts_epoch": float}``)
 - ``_reserve_rpm()`` does count-in-window + append under a single
-  exclusive ``fcntl.flock`` so two concurrent processes cannot double-
+  exclusive portable advisory lock so two concurrent processes cannot double-
   book the last few slots of the minute
 - Reservation BEFORE the API call (same trade-off as W2 Google Cloud
   TTS): over-count on transport failure, never under-count on partial
@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import fcntl
 import json
 import os
 import subprocess
@@ -64,6 +63,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+from lib.hal.file_lock import lock, unlock
 
 from ..types import VoiceError
 from ._errors import AuthFailure, NetworkError, RateLimited
@@ -148,7 +149,7 @@ def _requests_in_window(
     cutoff = (now_epoch if now_epoch is not None else time.time()) - window_s
     total = 0
     with rpm_path.open("r", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        lock(f, shared=True)
         try:
             for line in f:
                 line = line.strip()
@@ -162,7 +163,7 @@ def _requests_in_window(
                 if isinstance(ts_epoch, (int, float)) and ts_epoch >= cutoff:
                     total += 1
         finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            unlock(f)
     return total
 
 
@@ -188,7 +189,7 @@ def _reserve_rpm(
     now = now_epoch if now_epoch is not None else time.time()
     cutoff = now - window_s
     with rpm_path.open("a+", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        lock(f)
         try:
             f.seek(0)
             count = 0
@@ -216,7 +217,7 @@ def _reserve_rpm(
             os.fsync(f.fileno())
             return count + 1
         finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            unlock(f)
 
 
 # ---------- emotion encoding ----------

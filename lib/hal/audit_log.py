@@ -96,7 +96,7 @@ class AuditLog:
         os.makedirs(_AUDIT_DIR, exist_ok=True)
         date_str = time.strftime("%Y-%m-%d")
         path = os.path.join(_AUDIT_DIR, f"audit-{date_str}.jsonl")
-        with open(path, "a") as f:
+        with open(path, "a", encoding="utf-8") as f:
             for entry in self._entries:
                 f.write(json.dumps(entry.to_dict()) + "\n")
         count = len(self._entries)

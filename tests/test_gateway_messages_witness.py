@@ -121,7 +121,7 @@ def _read_signed_rows():
     p = signed_log_path()
     if not p.exists():
         return []
-    return [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()]
+    return [json.loads(ln) for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
 
 # ---------------------------------------------------------------------------
@@ -195,9 +195,9 @@ class TestTamperedLogFails(unittest.TestCase):
                 path=_MESSAGES_PATH,
             ))
             p = signed_log_path()
-            row = json.loads(p.read_text().splitlines()[0])
+            row = json.loads(p.read_text(encoding="utf-8").splitlines()[0])
             row["payload"]["model"] = "forged-model"  # tamper
-            p.write_text(json.dumps(row, separators=(",", ":")) + "\n")
+            p.write_text(json.dumps(row, separators=(",", ":")) + "\n", encoding="utf-8")
 
             key = signed_key_path().read_bytes()
             ok, bad = verify_chain(p, key)
@@ -208,7 +208,7 @@ class TestTamperedLogFails(unittest.TestCase):
             spine = str(_REPO / "bin" / "grip-verify-spine")
             result = subprocess.run(
                 [sys.executable, spine],
-                env={**os.environ, "HAL_HOME": home},
+                env={**os.environ, "HAL_HOME": str(home)},
                 capture_output=True,
             )
             self.assertNotEqual(result.returncode, 0,
@@ -326,7 +326,7 @@ class TestCrossWireIsNotFailover(unittest.TestCase):
                                 return_value=fake_resp):
                     handle_proxy_request(_FakeHandler(body), _FakeProxy(), _MESSAGES_PATH)
             log = home / "logs" / "gateway-audit.jsonl"
-            audit = [json.loads(ln) for ln in log.read_text().splitlines()]
+            audit = [json.loads(ln) for ln in log.read_text(encoding="utf-8").splitlines()]
             return audit, _read_signed_rows()
 
     def test_a_cross_wire_model_is_witnessed_without_failed_over(self):

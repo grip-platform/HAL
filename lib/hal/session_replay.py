@@ -112,7 +112,7 @@ class ReplayTimeline:
             elif event.event_type == "error":
                 lines.append(f"{prefix} !! {event.content}{annotation}")
 
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 
     def export_json(self, path: str) -> None:
@@ -125,7 +125,7 @@ class ReplayTimeline:
             "tool_count": self.tool_count,
             "events": [e.to_dict() for e in self.events],
         }
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
     def to_dict(self) -> dict:
@@ -220,7 +220,7 @@ def export_hal_format(timeline: ReplayTimeline, path: str) -> None:
         },
         "events": [e.to_dict() for e in timeline.events],
     }
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
@@ -228,7 +228,7 @@ def import_hal_format(path: str) -> ReplayTimeline | None:
     """Import a .hal portable session file back into a ReplayTimeline."""
     if not os.path.exists(path):
         return None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if data.get("format") != "hal-session-v1":
         return None
@@ -253,7 +253,7 @@ def load_replay(session_id: str) -> ReplayTimeline | None:
     path = os.path.join(_REPLAYS_DIR, f"{session_id}.json")
     if not os.path.exists(path):
         return None
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     events = [
         TimelineEvent(

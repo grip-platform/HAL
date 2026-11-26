@@ -19,8 +19,8 @@ Path-allowlist is cross-platform, deterministic, and testable as a
 pure function (``(root, candidate) -> allow|refuse``).
 
 **Audit log**: every refusal AND every successful tool call appends
-one JSONL line to ``~/.hal/logs/infer-with-tools.jsonl`` (best-effort,
-never raises). Format::
+one JSONL line to ``$HAL_HOME/logs/infer-with-tools.jsonl`` (default
+``~/.hal``, read at each write; best-effort, never raises). Format::
 
     {"ts": "...", "tool": "Read", "root": "~/.claude",
      "path": "lib/foo.py", "allowed": true, "bytes": 1234}
@@ -44,6 +44,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+from lib.hal.home import hal_home
 
 __all__ = [
     "SandboxEscapeError",
@@ -116,7 +118,9 @@ class SandboxTimeoutError(Exception):
 
 
 def _audit_path() -> Path:
-    return Path(os.path.expanduser("~/.hal/logs/infer-with-tools.jsonl"))
+    # Read at each write, so a test's own HAL_HOME catches it: with ~/.hal
+    # written here, local test runs appended to the live audit log (HAL#909).
+    return hal_home() / "logs" / "infer-with-tools.jsonl"
 
 
 def _audit(record: dict) -> None:
@@ -160,6 +164,25 @@ def _audit(record: dict) -> None:
 # so a ``..``-traversal like ``/var/folders/../log`` resolves to
 # ``/private/var/log`` and is caught here — verified by
 # ``test_sandbox_root_traversal_to_refused_leaf_rejected``).
+def _windows_system_roots() -> frozenset[str]:
+    """Return live Windows system roots that must never become a sandbox.
+
+    Environment-derived paths follow the real install drive. Conventional
+    ``C:\\`` locations cover locked-down environments that omit the variables;
+    POSIX returns nothing because these names have no meaning there.
+    """
+    if os.name != "nt":
+        return frozenset()
+    system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+    program_files = os.environ.get("ProgramFiles") or r"C:\Program Files"
+    program_files_x86 = (os.environ.get("ProgramFiles(x86)")
+                         or r"C:\Program Files (x86)")
+    program_data = os.environ.get("ProgramData") or r"C:\ProgramData"
+    candidates = (system_root, os.path.join(system_root, "System32"),
+                  program_files, program_files_x86, program_data)
+    return frozenset(os.path.realpath(path) for path in candidates)
+
+
 _REFUSED_ROOTS = frozenset({
     "/",
     "/etc", "/private/etc",
@@ -177,7 +200,7 @@ _REFUSED_ROOTS = frozenset({
     "/var/spool", "/private/var/spool",
     # ``/Library`` and the broad ``/var`` parent deliberately omitted —
     # too broad on macOS; subpaths are legitimately read by tooling.
-})
+}) | _windows_system_roots()
 
 
 def validate_root(sandbox_root: str) -> str:
@@ -190,8 +213,9 @@ def validate_root(sandbox_root: str) -> str:
     1. Not empty
     2. Absolute path (``os.path.abspath``)
     3. ``realpath`` resolves to an existing **directory**
-    4. ``realpath`` is not in :data:`_REFUSED_ROOTS`
-    5. ``realpath`` is not under any refused root prefix
+    4. ``realpath`` is not a filesystem root
+    5. ``realpath`` is not in :data:`_REFUSED_ROOTS`
+    6. ``realpath`` is not under any refused root prefix
     """
     if not sandbox_root:
         raise SandboxRootRefused("sandbox_root is required (got empty string)")
@@ -207,6 +231,11 @@ def validate_root(sandbox_root: str) -> str:
     if not os.path.isdir(realpath):
         raise SandboxRootRefused(
             f"sandbox_root is not a directory: {realpath!r}"
+        )
+
+    if os.path.dirname(realpath) == realpath:
+        raise SandboxRootRefused(
+            f"sandbox_root resolves to a filesystem root: {realpath!r}"
         )
 
     if realpath in _REFUSED_ROOTS:
@@ -245,16 +274,16 @@ def _resolve_safe(root: str, candidate: str) -> str:
             f"path resolution failed: {candidate!r} ({exc})"
         ) from exc
 
-    # Resolved path must equal root OR be a descendant
-    if resolved == root:
-        return resolved
-    if resolved.startswith(root + os.sep):
-        return resolved
-
-    raise SandboxEscapeError(
-        f"path escapes sandbox: {candidate!r} -> {resolved!r} "
-        f"(root: {root!r})"
-    )
+    # Path flavour supplies Windows' case-insensitive comparison while POSIX
+    # remains exact. Equality is contained too: its relative path is ``.``.
+    try:
+        Path(resolved).relative_to(root)
+    except ValueError:
+        raise SandboxEscapeError(
+            f"path escapes sandbox: {candidate!r} -> {resolved!r} "
+            f"(root: {root!r})"
+        )
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -340,9 +369,10 @@ def read_text(
     # Decode AFTER the binary check so replacement characters can only
     # appear on partial-UTF-8 source files, never on binary content.
     content = blob.decode("utf-8", errors="replace")
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
 
     _audit({"tool": "Read", "root": root, "path": path,
-            "allowed": True, "bytes": len(blob),
+            "allowed": True, "bytes": len(content.encode("utf-8")),
             "truncated": truncated})
     return content
 
@@ -362,18 +392,17 @@ def _ripgrep_available() -> bool:
 def _parse_rg_line(line: str, root: str) -> Optional[GrepMatch]:
     """Parse one ripgrep output line ``<path>:<line>:<text>``. Returns
     None on malformed line or relative-path that escapes root."""
-    parts = line.split(":", 2)
-    if len(parts) != 3:
+    match = re.match(r"^(.*?):(\d+):(.*)$", line)
+    if match is None:
         return None
-    abs_path, line_no, text = parts
+    abs_path, line_no, text = match.groups()
     try:
-        rel = os.path.relpath(abs_path, root)
+        resolved = _resolve_safe(root, abs_path)
+        rel = os.path.relpath(resolved, root)
         line_int = int(line_no)
-    except ValueError:
+    except (SandboxEscapeError, ValueError):
         return None
-    if rel.startswith(".."):
-        return None  # safety belt
-    return GrepMatch(path=rel, line=line_int, text=text[:200])
+    return GrepMatch(path=Path(rel).as_posix(), line=line_int, text=text[:200])
 
 
 def _grep_via_ripgrep(
@@ -424,16 +453,17 @@ def _grep_file_stdlib(
     ``remaining`` hits."""
     found: list[GrepMatch] = []
     try:
-        with open(abs_path, encoding="utf-8", errors="replace") as f:
+        resolved = _resolve_safe(root, abs_path)
+        with open(resolved, encoding="utf-8", errors="replace") as f:
             for i, line in enumerate(f, 1):
                 if regex.search(line):
-                    rel = os.path.relpath(abs_path, root)
+                    rel = os.path.relpath(resolved, root)
                     found.append(GrepMatch(
-                        path=rel, line=i,
+                        path=Path(rel).as_posix(), line=i,
                         text=line.rstrip("\n")[:200]))
                     if len(found) >= remaining:
                         break
-    except OSError:
+    except (OSError, SandboxEscapeError):
         pass
     return found
 
@@ -465,10 +495,12 @@ def _grep_via_stdlib(
         _audit({"tool": "Grep", "root": root, "pattern": pattern,
                 "allowed": False, "reason": "bad_regex"})
         return []
-    deadline = time.monotonic() + timeout_s
+    # perf_counter, not monotonic: on Windows monotonic moves in ~15.6 ms steps,
+    # and >= lets a zero timeout fire even when the clock has not moved.
+    deadline = time.perf_counter() + timeout_s
     hits: list[GrepMatch] = []
     for full in _walk_files(root):
-        if time.monotonic() > deadline:
+        if time.perf_counter() >= deadline:
             _audit({"tool": "Grep", "root": root, "pattern": pattern,
                     "allowed": False,
                     "reason": f"stdlib_timeout_{timeout_s}s"})
@@ -541,12 +573,12 @@ def glob_pattern(
 
     if timeout_s is None:
         timeout_s = _DEFAULT_GLOB_TIMEOUT_S
-    deadline = time.monotonic() + timeout_s
+    deadline = time.perf_counter() + timeout_s  # see _grep_via_stdlib
     hits: list[str] = []
     root_path = Path(root)
     try:
         for match in root_path.rglob(pattern):
-            if time.monotonic() > deadline:
+            if time.perf_counter() >= deadline:
                 _audit({"tool": "Glob", "root": root, "pattern": pattern,
                         "allowed": False,
                         "reason": f"timeout_{timeout_s}s"})
@@ -563,7 +595,7 @@ def glob_pattern(
                 rel = match.relative_to(root_path)
             except ValueError:
                 continue
-            hits.append(str(rel))
+            hits.append(rel.as_posix())
             if len(hits) >= max_hits:
                 break
     except OSError as exc:

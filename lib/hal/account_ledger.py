@@ -82,6 +82,21 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    open_process = kernel32.OpenProcess
+    open_process.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    open_process.restype = wintypes.HANDLE
+    get_exit_code = kernel32.GetExitCodeProcess
+    get_exit_code.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    get_exit_code.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+
 from lib.hal.locked_json import read_json, update_json
 
 _log = logging.getLogger("hal.account_ledger")
@@ -414,8 +429,10 @@ def _private_dir(path: Path) -> bool:
         st = os.lstat(path)
     except OSError:
         return False
-    return (stat.S_ISDIR(st.st_mode) and _owned(st)
-            and not stat.S_IMODE(st.st_mode) & _GROUP_OTHER)
+    # Windows exposes no POSIX group/other permission bits through stat; NTFS ACL
+    # validation is outside this layer, so retain every check Windows can express.
+    private_mode = os.name == "nt" or not stat.S_IMODE(st.st_mode) & _GROUP_OTHER
+    return stat.S_ISDIR(st.st_mode) and _owned(st) and private_mode
 
 
 def _private_text(path: Path) -> Optional[str]:
@@ -432,8 +449,9 @@ def _private_text(path: Path) -> Optional[str]:
         return None
     try:
         st = os.fstat(fd)
-        if not (stat.S_ISREG(st.st_mode) and _owned(st)
-                and not stat.S_IMODE(st.st_mode) & _GROUP_OTHER):
+        # Windows stat mirrors synthetic mode bits across owner/group/other.
+        private_mode = os.name == "nt" or not stat.S_IMODE(st.st_mode) & _GROUP_OTHER
+        if not (stat.S_ISREG(st.st_mode) and _owned(st) and private_mode):
             return None
         data = os.read(fd, _MAX_FILE_BYTES + 1)
     except OSError:
@@ -562,8 +580,7 @@ def _flights(entry: dict) -> Dict[str, list]:
 def _alive(pid_text: str) -> bool:
     """Whether the process that counted a request still runs.
 
-    Never signals on Windows, where ``os.kill`` would end the process: there an
-    entry is retired by age alone.
+    Windows uses a query-only process handle; POSIX probes with signal zero.
     """
     try:
         pid = int(pid_text)
@@ -572,7 +589,18 @@ def _alive(pid_text: str) -> bool:
     if pid <= 0:
         return False
     if os.name == "nt":
-        return True
+        handle = open_process(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.get_last_error() == 5  # access denied still means it exists
+        try:
+            exit_code = wintypes.DWORD()
+            if not get_exit_code(handle, ctypes.byref(exit_code)):
+                return True
+            # STILL_ACTIVE (259) means running; PID reuse by another process
+            # is a known, accepted limitation of this liveness probe.
+            return exit_code.value == 259
+        finally:
+            close_handle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

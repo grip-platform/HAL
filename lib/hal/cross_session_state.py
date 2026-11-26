@@ -129,7 +129,7 @@ class CrossSessionStateFile:
         """
         if not self._path.exists():
             return self.default_factory()
-        with self._path.open("r") as f:
+        with self._path.open("r", encoding="utf-8") as f:
             with _locked(f.fileno(), exclusive=False):
                 return self._decode_or_default(f.read())
 
@@ -143,7 +143,7 @@ class CrossSessionStateFile:
         atomic-rename is rejected here.
         """
         self._ensure_file()
-        with self._path.open("r+") as f:
+        with self._path.open("r+", encoding="utf-8") as f:
             with _locked(f.fileno(), exclusive=True):
                 self._write_under_lock(f, data)
 
@@ -159,7 +159,7 @@ class CrossSessionStateFile:
         bleed into the persisted state.
         """
         self._ensure_file()
-        with self._path.open("r+") as f:
+        with self._path.open("r+", encoding="utf-8") as f:
             with _locked(f.fileno(), exclusive=True):
                 f.seek(0)
                 current = self._decode_or_default(f.read())
@@ -173,7 +173,7 @@ class CrossSessionStateFile:
         """Create parent directory + empty JSON object if missing."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
         if not self._path.exists():
-            self._path.write_text("{}")
+            self._path.write_text("{}", encoding="utf-8")
 
     def _decode_or_default(self, raw: str) -> StateDict:
         """Decode JSON; return default factory on empty or corrupt input."""

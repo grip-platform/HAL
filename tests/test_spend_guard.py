@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from email.message import Message
@@ -52,6 +54,21 @@ def clock(monkeypatch):
         monkeypatch.setattr(spend_guard, "_clock", lambda: moment)
     at(BEFORE)
     return at
+
+
+def test_daily_ledger_lock_timeout_refuses_without_waiting_forever(tmp_path, monkeypatch):
+    """Mutation: call the unbounded ``lock`` instead of ``lock_within``.
+    Survives by forcing acquisition failure and asserting the write is refused,
+    remembered as unrecorded, and returns comfortably inside the lock bound."""
+    monkeypatch.setenv("HAL_HOME", str(tmp_path))
+    monkeypatch.setattr(spend_guard, "lock_within", lambda handle, timeout: False)
+    day = "2026-11-26"
+    started = time.monotonic()
+    entry = spend_guard._update_entry(TYPESAFE_API_KEY, day, lambda row: None)
+    elapsed = time.monotonic() - started
+    assert entry is None
+    assert (TYPESAFE_API_KEY, day) in spend_guard._UNRECORDED
+    assert elapsed < 3.0
 
 
 # --------------------------------------------------------------------------- #
@@ -159,7 +176,10 @@ def test_a_missing_policy_refuses_paid(tmp_path, monkeypatch, clock):
     assert spend_guard.decide_paid(API_KEY).allowed is False
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root reads any file")
+@pytest.mark.skipif(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="POSIX file permissions require a non-root POSIX process",
+)
 def test_an_unreadable_policy_refuses_paid(policy_file, clock):
     path = policy_file(opt_in=["*"])
     path.chmod(0)

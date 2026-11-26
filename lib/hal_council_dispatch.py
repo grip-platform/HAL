@@ -385,7 +385,10 @@ _AGORA_SPEAKER_ROSTER: list[tuple[str, str, dict, str]] = _build_agora_speaker_r
 # and DOES NOT fabricate a verdict. Per rules/exogenous-anchor-law.md: a
 # self-fulfilling judge from a speaker provider is worse than no judge.
 #
-# Model: gemini-3.1-pro-preview (upgraded from 2.5-flash on 2026-05-29). The
+# Model: gemini-4-carbon from 2026-11-26 (V>>: replace 3.1 Pro with the new
+# Gemini 4 models; Carbon is Google's "strongest reasoning model"), mirroring
+# GRIP's judge. Before that, gemini-3.1-pro-preview (upgraded from 2.5-flash on
+# 2026-05-29). The
 # Flash judge produced false-positive REQUEST_CHANGES verdicts on correct PRs
 # (HAL #387/#389/#390) that contradicted its own speaker synthesis — e.g. a
 # CPython-inapplicable "memory-model race" verdict on #390's double-checked
@@ -395,10 +398,10 @@ _AGORA_SPEAKER_ROSTER: list[tuple[str, str, dict, str]] = _build_agora_speaker_r
 # so the existing workflow credential unblocks it with no new setup, and it
 # stays exogenous to the non-Google speakers (the import-time guard holds).
 _JUDGE_PROVIDER: tuple[str, str, dict, str] = (
-    "gemini-3.1-pro-judge",
-    "gemini/gemini-3.1-pro-preview",
+    "gemini-4-carbon-judge",
+    "gemini/gemini-4-carbon",
     {"scheme": "apikey", "token": _token("GEMINI_API_KEY", "grip-gemini")},
-    "Google Gemini 3.1 Pro (judge — exogenous to speakers)",
+    "Google Gemini 4 Carbon (judge — exogenous to speakers)",
 )
 
 

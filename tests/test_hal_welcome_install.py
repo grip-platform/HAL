@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -82,8 +81,8 @@ def test_plist_inlines_custom_log_and_err_paths(tmp_path):
     plist = render_launch_agent_plist(
         Path("/h/hal"), log_path=log, err_path=err,
     )
-    assert str(log) in plist
-    assert str(err) in plist
+    assert log.as_posix() in plist
+    assert err.as_posix() in plist
 
 
 def test_plist_bakes_in_extra_welcome_args():

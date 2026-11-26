@@ -23,7 +23,11 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+from tests._bash import find_bash
+
 _HAL = Path(__file__).resolve().parents[1] / "bin" / "hal"
+_BASH = find_bash()
 
 
 def _llm_block() -> str:
@@ -62,8 +66,10 @@ def test_no_second_store_no_marker_logic():
 
 
 def test_absent_grip_failsafe(tmp_path):
+    if _BASH is None:
+        pytest.skip("no usable bash found on this machine (install Git Bash on Windows)")
     missing = str(tmp_path / "no-grip-here")               # guaranteed absent
-    r = subprocess.run(["bash", str(_HAL), "llm", "show"],
+    r = subprocess.run([_BASH, str(_HAL), "llm", "show"],
                         capture_output=True, text=True, timeout=20,
                         env={**os.environ, "CLAUDE_DIR": missing})
     assert r.returncode != 0                                # fail-safe non-zero
@@ -73,12 +79,13 @@ def test_absent_grip_failsafe(tmp_path):
 
 
 def test_present_reaches_canonical_module():
+    if _BASH is None:
+        pytest.skip("no usable bash found on this machine (install Git Bash on Windows)")
     grip = os.environ.get("CLAUDE_DIR", os.path.expanduser("~/.claude"))
     if not Path(grip, "lib", "active_llm.py").is_file():
-        import pytest
         pytest.skip("GRIP not installed in this env")
     # `show` is READ-ONLY — never mutates the marker.
-    r = subprocess.run(["bash", str(_HAL), "llm", "show"],
+    r = subprocess.run([_BASH, str(_HAL), "llm", "show"],
                         capture_output=True, text=True, timeout=30,
                         env={**os.environ, "CLAUDE_DIR": grip})
     assert r.returncode == 0

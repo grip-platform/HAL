@@ -134,7 +134,7 @@ def _count_defs(tree: ast.Module) -> tuple[int, int]:
 def _count_lines(path: str) -> int:
     """Count lines in a file."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return sum(1 for _ in f)
     except OSError:
         return 0
@@ -154,7 +154,7 @@ def _walk_python(root: str) -> list[str]:
 def _parse_safe(path: str) -> ast.Module | None:
     """Parse a Python file, returning None on failure."""
     try:
-        with open(path, "r", errors="replace") as f:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
             return ast.parse(f.read(), filename=path)
     except (SyntaxError, OSError):
         return None

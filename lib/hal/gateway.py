@@ -1462,6 +1462,36 @@ class GatewayHTTPServer(ThreadingHTTPServer):
 
     request_queue_size = 128
 
+    def server_bind(self) -> None:
+        """Bind with strict Windows ownership and unchanged POSIX reuse.
+
+        Windows' SO_REUSEADDR can bind over an active listener. Using
+        SO_EXCLUSIVEADDRUSE there preserves the EADDRINUSE signal required by
+        the gateway's holder detection and reclaim path. super().server_bind()
+        still runs on every platform (http.server.HTTPServer.server_bind sets
+        server_name/server_port, which socketserver.TCPServer.server_bind
+        alone does not) -- only the socket option differs; POSIX behaviour is
+        otherwise byte-identical to the stdlib's.
+
+        Measured on the real Windows 11 VM (tests/test_gateway_windows_rebind_
+        measurement.py): a listener can rebind its port immediately, with no
+        retry, right after the previous listener on that port closed, even
+        while one of its accepted connections -- closed by the server, so the
+        server's side is the one left in TIME_WAIT -- is still in that state.
+        SO_EXCLUSIVEADDRUSE therefore needs no bind-retry loop in
+        _bind_gateway: the idempotent-relaunch path this class exists for
+        already works first try on Windows, exactly as it does on POSIX.
+        """
+        if sys.platform != "win32":
+            super().server_bind()
+            return
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        reuse, self.allow_reuse_address = self.allow_reuse_address, False
+        try:
+            super().server_bind()
+        finally:
+            self.allow_reuse_address = reuse
+
 
 def _http_port_holder(port: int) -> Optional[str]:
     """Identify an HTTP responder without proxies, redirects or unbounded reads.

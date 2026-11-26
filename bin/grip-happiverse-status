@@ -43,7 +43,7 @@ def _last_witness_row() -> dict | None:
     p = signed_log_path()
     if not p.exists():
         return None
-    lines = [ln for ln in p.read_text().splitlines() if ln.strip()]
+    lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
     if not lines:
         return None
     row = json.loads(lines[-1])
@@ -72,7 +72,7 @@ def _chain_status() -> str:
         if not ok:
             return f"FAIL {f.name} line {bad} — TAMPERED"
         import json
-        rows = [l for l in f.read_text(errors="replace").strip().splitlines() if l]
+        rows = [l for l in f.read_text(errors="replace", encoding="utf-8").strip().splitlines() if l]
         prev = json.loads(rows[-1]).get("hmac") if rows else prev
     return f"PASS ({len(files)} files, {log_path.name})"
 

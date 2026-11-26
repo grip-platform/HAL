@@ -111,7 +111,7 @@ class ProviderAnalytics:
         """Persist analytics to disk."""
         os.makedirs(os.path.dirname(_ANALYTICS_PATH), exist_ok=True)
         data = {name: stats.to_dict() for name, stats in self._stats.items()}
-        with open(_ANALYTICS_PATH, "w") as f:
+        with open(_ANALYTICS_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
     def _load(self) -> None:
@@ -119,7 +119,7 @@ class ProviderAnalytics:
         if not os.path.exists(_ANALYTICS_PATH):
             return
         try:
-            with open(_ANALYTICS_PATH) as f:
+            with open(_ANALYTICS_PATH, encoding="utf-8") as f:
                 data = json.load(f)
             for name, d in data.items():
                 self._stats[name] = ProviderStats(

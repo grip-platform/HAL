@@ -117,7 +117,7 @@ class Scheduler:
         if not os.path.exists(_SCHEDULES_PATH):
             return
         try:
-            with open(_SCHEDULES_PATH, "r") as f:
+            with open(_SCHEDULES_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             for item in data:
                 self._schedules[item["name"]] = Schedule(
@@ -143,5 +143,5 @@ class Scheduler:
             }
             for s in self._schedules.values()
         ]
-        with open(_SCHEDULES_PATH, "w") as f:
+        with open(_SCHEDULES_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

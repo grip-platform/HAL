@@ -98,6 +98,11 @@ def test_dojo_prefers_grips_own_interpreter(tmp_path, monkeypatch):
     assert calls[0][0][0] == str(grip_python)
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason=("Windows chmod()/stat() cannot represent a POSIX executable-bit "
+            "difference between the 0o755 and 0o644 extensionless fixtures"),
+)
 def test_a_grip_python_that_cannot_run_is_passed_over(tmp_path, monkeypatch):
     # AGORA on HAL#629: a file that merely exists was chosen, so a broken venv
     # made /dojo fail although this interpreter could run it.

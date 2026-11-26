@@ -294,7 +294,7 @@ def private_overlay_path() -> Path | None:
 def _guardian_repo() -> str:
     """The guardian_repo value from config/guardian.local.json, "" if unreadable."""
     try:
-        repo = json.loads(GUARDIAN_LOCAL.read_text()).get("guardian_repo")
+        repo = json.loads(GUARDIAN_LOCAL.read_text(encoding="utf-8")).get("guardian_repo")
     except (OSError, ValueError, AttributeError):
         return ""
     return repo if isinstance(repo, str) else ""
@@ -392,7 +392,7 @@ def _load_file(path: Path) -> Denylist:
             f"redaction denylist unusable ({state}): {path} — "
             "on a git-crypt-locked checkout run `git-crypt unlock` first"
         )
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     return Denylist(
         entries=tuple(_parse_entry(e) for e in data["entities"]),
         allowlist=tuple(data.get("allowlist", [])),
@@ -1151,7 +1151,7 @@ def _selftest_denylist() -> Denylist:
 
 
 def _read_input(target: str) -> str:
-    return sys.stdin.read() if target == "-" else Path(target).read_text()
+    return sys.stdin.read() if target == "-" else Path(target).read_text(encoding="utf-8")
 
 
 def _cmd_selftest() -> int:

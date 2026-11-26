@@ -22,7 +22,7 @@ Quota accounting:
 - Persists to ``~/.hal/state/voice/google_cloud_tts_quota.jsonl``
 - Per-record shape: ``{"ts": ISO8601, "ym": "YYYY-MM", "chars": int}``
 - ``_reserve_chars()`` does check-AND-record under a single exclusive
-  ``fcntl.flock`` so two concurrent processes cannot double-book the last
+  portable advisory lock so two concurrent processes cannot double-book the last
   few characters of the monthly allotment.
 - Reservations are made BEFORE the API call: on network or auth failure
   the chars stay counted (over-conservative, avoids the commit-after-call
@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import fcntl
 import json
 import os
 import subprocess
@@ -51,6 +50,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+from lib.hal.file_lock import lock, unlock
 
 from ..types import VoiceError
 from ._errors import AuthFailure, NetworkError, QuotaExceeded, RateLimited
@@ -119,7 +120,7 @@ def _chars_this_month(quota_path: Path) -> int:
     ym = _now_ym()
     total = 0
     with quota_path.open("r", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+        lock(f, shared=True)
         try:
             for line in f:
                 line = line.strip()
@@ -132,7 +133,7 @@ def _chars_this_month(quota_path: Path) -> int:
                 if record.get("ym") == ym:
                     total += int(record.get("chars", 0))
         finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            unlock(f)
     return total
 
 
@@ -155,7 +156,7 @@ def _reserve_chars(
     quota_path.parent.mkdir(parents=True, exist_ok=True)
     ym = _now_ym()
     with quota_path.open("a+", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        lock(f)
         try:
             f.seek(0)
             total = 0
@@ -182,7 +183,7 @@ def _reserve_chars(
             os.fsync(f.fileno())
             return total + chars
         finally:
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            unlock(f)
 
 
 # ---------- audio format helpers ----------

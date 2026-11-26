@@ -67,7 +67,12 @@ def anchor_once(store: BrainStore, destination: Path, ca_file: Path, *, anchor=N
         elif answer.get("status") == "anchored":
             token = base64.b64decode(answer["token_b64"], validate=True)
             token_path = pending / "timestamp.der"
-            token_path.write_bytes(token)
+            # fsync through the handle that wrote the bytes: Windows refuses
+            # fsync on a handle opened read-only (EBADF).
+            with token_path.open("wb") as out:
+                out.write(token)
+                out.flush()
+                os.fsync(out.fileno())
             if verify_timestamp(root, token_path, ca_file):
                 status = "anchored"
     except Exception:
@@ -81,9 +86,6 @@ def anchor_once(store: BrainStore, destination: Path, ca_file: Path, *, anchor=N
         out.write(infinite_thread.canonical(manifest))
         out.flush()
         os.fsync(out.fileno())
-    if (pending / "timestamp.der").exists():
-        with (pending / "timestamp.der").open("rb") as token_file:
-            os.fsync(token_file.fileno())
     pending.rename(destination / name)
     return {"root": root, "status": status, "path": str(destination / name)}
 

@@ -97,7 +97,7 @@ class TaskStore:
         if not os.path.isfile(path):
             return None
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return _task_from_dict(json.load(f))
         except (json.JSONDecodeError, KeyError):
             return None

@@ -187,7 +187,7 @@ class SessionRegistry:
                 for m in session.conversation.history
             ],
         }
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
     def _remove_from_disk(self, session_id: str) -> None:
@@ -210,7 +210,7 @@ class SessionRegistry:
     def _load_session_file(self, path: str) -> Optional[ConversationSession]:
         """Load a single session from a JSON file. O(M) over messages."""
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             session_id = data["id"]
             model = data.get("model", "")

@@ -41,7 +41,7 @@ def main() -> int:
     ok, bad_line = verify_chain(log_path, key)
     if ok:
         # Count rows for informational output.
-        rows = [ln for ln in log_path.read_text().splitlines() if ln.strip()]
+        rows = [ln for ln in log_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
         print(f"PASS — {len(rows)} signed row(s) verified ({log_path})")
         return 0
     else:

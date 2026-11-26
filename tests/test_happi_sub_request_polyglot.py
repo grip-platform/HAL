@@ -26,14 +26,22 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+from tests._bash import find_bash
+
 REPO = Path(__file__).resolve().parent.parent
 HAPPI = REPO / "happi.md"
+_BASH = find_bash()
+pytestmark = pytest.mark.skipif(
+    _BASH is None,
+    reason="no usable bash found on this machine (install Git Bash on Windows)",
+)
 
 
 def dispatch(envelope):
     """Send one envelope through `bash happi.md run`; return (rc, events)."""
     proc = subprocess.run(
-        ["bash", str(HAPPI), "run"],
+        [_BASH, str(HAPPI), "run"],
         input=json.dumps(envelope), capture_output=True, text=True,
     )
     events = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]

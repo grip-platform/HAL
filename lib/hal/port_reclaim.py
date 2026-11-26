@@ -19,7 +19,8 @@ process(es) holding it and terminates them, so a repeated launch always
 converges to exactly one listener — the self-healing a cron/launchd-managed
 singleton wants. It is scoped to ``LISTEN`` sockets on the *exact* TCP port
 (via ``lsof``, the same scoping GRIP's ``bin/grip-hal`` uses), so it can never
-kill an unrelated process. SIGTERM first (graceful); SIGKILL only stragglers.
+kill an unrelated process. SIGTERM first (graceful); the platform's hard-kill
+signal only for stragglers.
 
 syscall-doctrine: one shim over the ``lsof``/``kill`` boundary — callers pass a
 port and never touch ``lsof`` argv or signal numbers themselves.
@@ -32,11 +33,16 @@ import signal
 import subprocess
 import time
 
-__all__ = ["reclaim_port", "listening_pids", "port_in_use"]
+__all__ = ["reclaim_port", "listening_pids", "port_in_use", "HARD_KILL_SIGNAL"]
 
 # lsof on a single port is near-instant; cap it so a wedged lsof can never
 # block a service launch indefinitely.
 _LSOF_TIMEOUT_S = 5.0
+
+#: The signal used to forcibly end a straggler after the grace window. Windows
+#: has no SIGKILL, but os.kill(pid, SIGTERM) already calls TerminateProcess
+#: there, so SIGTERM is also that platform's hard-kill escalation target.
+HARD_KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
 def listening_pids(port: int) -> list[int]:
@@ -88,7 +94,8 @@ def reclaim_port(port: int, *, grace_s: float = 2.0) -> list[int]:
     The idempotent-launch primitive. No-op (returns ``[]``) when the port is
     free. Never targets the caller's own PID. SIGTERM is sent first (graceful
     shutdown); any holder still listening after ``grace_s`` is escalated to
-    SIGKILL. The returned list is the set we signalled, for caller logging.
+    the platform's hard kill (SIGKILL on POSIX; SIGTERM serves as Windows'
+    hard kill). The returned list is the set we signalled, for caller logging.
     """
     me = os.getpid()
     targets = [pid for pid in listening_pids(port) if pid != me]
@@ -106,5 +113,5 @@ def reclaim_port(port: int, *, grace_s: float = 2.0) -> list[int]:
         time.sleep(0.1)
 
     for pid in [pid for pid in listening_pids(port) if pid != me]:
-        _terminate(pid, signal.SIGKILL)
+        _terminate(pid, HARD_KILL_SIGNAL)
     return targets

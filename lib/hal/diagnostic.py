@@ -115,7 +115,7 @@ def _check_git() -> list[DiagnosticIssue]:
 def _check_python_version() -> list[DiagnosticIssue]:
     """Check Python version compatibility."""
     import sys
-    if sys.version_info < (3, 10):
+    if sys.version_info < (3, 11):
         v = f"{sys.version_info.major}.{sys.version_info.minor}"
-        return [_issue("dependency", "error", f"Python {v} detected — HAL requires 3.10+", "Install Python 3.10+")]
+        return [_issue("dependency", "error", f"Python {v} detected — HAL requires 3.11+", "Install Python 3.11+")]
     return []

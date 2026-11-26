@@ -5,7 +5,7 @@ Architecture
 Two failure modes cause overlapping audio or stuttering:
 
 1. Cross-process overlap — two ``hal voice say`` invocations both call
-   ``afplay`` simultaneously.  Fixed by an ``fcntl.flock`` on
+   ``afplay`` simultaneously.  Fixed by a portable advisory lock on
    ``~/.hal/state/voice/audio.lock`` held for the entire playback duration.
 
 2. In-process race — concurrent ``speak()`` calls within one process
@@ -37,7 +37,6 @@ in-flight synthesis result to be dropped rather than played.
 """
 from __future__ import annotations
 
-import fcntl
 import platform
 import queue
 import re
@@ -46,6 +45,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
+
+from lib.hal.file_lock import lock, unlock
 
 from .cache import tmpfs_audio_path
 
@@ -81,7 +82,7 @@ def split_sentences(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 class _AudioLock:
-    """``fcntl.flock`` context manager — blocks until the audio device is free.
+    """Portable file-lock context manager — blocks until the audio device is free.
 
     Held for the duration of every ``afplay`` call.  Any concurrent process
     (e.g. a cron-fired ``hal voice say``) waits here rather than mixing audio.
@@ -93,12 +94,12 @@ class _AudioLock:
         self._fd: Optional[int] = None
 
     def acquire(self) -> None:
-        self._fd = open(self._path, "w")
-        fcntl.flock(self._fd, fcntl.LOCK_EX)
+        self._fd = open(self._path, "w", encoding="utf-8")
+        lock(self._fd)
 
     def release(self) -> None:
         if self._fd is not None:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            unlock(self._fd)
             self._fd.close()
             self._fd = None
 
@@ -180,7 +181,7 @@ class AudioController:
             raise PlatformUnsupported(
                 f"AudioController.play_file is macOS-only, not {platform.system()}"
             )
-        start = time.monotonic()
+        start = time.perf_counter()
         with self._audio_lock:
             proc = subprocess.Popen(["afplay", str(path)])
             with self._proc_lock:
@@ -188,7 +189,7 @@ class AudioController:
             proc.wait()
             with self._proc_lock:
                 self._current_proc = None
-        return time.monotonic() - start
+        return time.perf_counter() - start
 
     def speak(
         self,
@@ -269,9 +270,9 @@ class AudioController:
                         proc = subprocess.Popen(["afplay", str(path)])
                         with self._proc_lock:
                             self._current_proc = proc
-                        t0 = time.monotonic()
+                        t0 = time.perf_counter()
                         proc.wait()
-                        elapsed = time.monotonic() - t0
+                        elapsed = time.perf_counter() - t0
                         with self._proc_lock:
                             self._current_proc = None
             except Exception:

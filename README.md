@@ -193,7 +193,7 @@ Beyond the global chain, HAL routes through **tier-scoped fallback chains** so f
 | free | ollama/gemma4:26b → ollama/gemma4:e4b |
 | cheap | qwen → openrouter/gemma-4-31b → groq |
 | mid | gemini-2.5-flash → openrouter → deepseek-v4-flash |
-| premium | xai/grok-4.20-0309-reasoning → gemini-3.1-pro-preview → deepseek-v4-pro → groq/gpt-oss-120b |
+| premium | xai/grok-4.20-0309-reasoning → gemini-4-carbon → deepseek-v4-pro → groq/gpt-oss-120b |
 
 This respects the operator's cost-band intent — a `cheap` request that fails on Qwen retries on OpenRouter and Groq before considering escalation to a paid mid-tier model.
 
@@ -305,11 +305,13 @@ bash scripts/sync-happi-gist.sh --verify
 
 ```bash
 # Run tests. The core needs only the standard library; the test suite runs under
-# pytest, and a few tests import pyyaml, cryptography, apsw or xxhash. Keep the
-# venv outside the clone so the checkout stays clean.
-python3 -m venv ~/.hal-test-venv && ~/.hal-test-venv/bin/pip install pytest pyyaml cryptography apsw xxhash
-cd ~/.hal && HAL_HOME=~/.hal ~/.hal-test-venv/bin/python -m pytest -q tests
+# pytest, and a few tests import pyyaml, cryptography, apsw or xxhash. The script
+# below finds python3, python or py, keeps the venv outside the clone, and works
+# the same on macOS, Linux and Windows (in Git Bash).
+bash ~/.hal/bin/test-venv.sh
+cd ~/.hal && HAL_HOME=~/.hal bash bin/test-venv.sh python -m pytest -q tests
 
+# On Windows, run these in Git Bash, and use python (or py -3) where a line says python3.
 # Run demo
 HAL_HOME=~/.hal python3 lib/hal/demo.py --live
 

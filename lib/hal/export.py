@@ -36,7 +36,7 @@ def to_markdown(
         header = role_headers.get(msg.role, f"## {msg.role.title()}")
         lines.append(f"{header}\n\n{msg.content}\n")
 
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
 
@@ -52,14 +52,14 @@ def to_json(
         "model": model,
         "messages": [{"role": m.role, "content": m.content} for m in history],
     }
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
 def to_text(history: list[ChatMessage], path: str) -> None:
     """Export conversation as plain text."""
     lines = [f"[{m.role.upper()}]\n{m.content}\n" for m in history]
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
 

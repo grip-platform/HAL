@@ -22,7 +22,9 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 # Folders the public build ships single files from (DATA_KEEP in the builder).
-PARTLY_PUBLIC = frozenset({".github"})
+# scripts/ ships only install-starter.sh (build_oss_candidate.py DATA_KEEP);
+# every other file under scripts/, including build-happi.py, still withholds.
+PARTLY_PUBLIC = frozenset({".github", "scripts"})
 # Public HAL never ships scripts/, so this file marks the full repository.
 FULL_REPO_MARKER = "scripts/build_oss_candidate.py"
 

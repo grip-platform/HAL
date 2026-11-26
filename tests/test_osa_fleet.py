@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from lib.hal.osa.fleet import (
     FleetResult,
@@ -135,25 +135,32 @@ class FleetParallelism(unittest.TestCase):
     """Dispatches to independent hosts must run concurrently."""
 
     @patch("lib.hal.osa.fleet.osa")
-    def test_parallel_faster_than_serial(self, mock_osa) -> None:
-        call_starts: list = []
+    def test_parallel_dispatch_intervals_overlap(self, mock_osa) -> None:
+        starts: dict[str, float] = {}
+        ends: dict[str, float] = {}
         lock = threading.Lock()
+        delay = 0.2  # wide enough that a stalled runner still starts every worker inside it
 
         def slow_dispatch(name, params, *, transport, **kw):
             with lock:
-                call_starts.append(time.monotonic())
-            time.sleep(0.05)
+                starts[transport.host] = time.monotonic()
+            time.sleep(delay)
+            with lock:
+                ends[transport.host] = time.monotonic()
             return _ok()
 
         mock_osa.side_effect = slow_dispatch
         hosts = {f"host-{i}": ("battery_get", {}) for i in range(4)}
 
-        t_start = time.monotonic()
-        results = osa_fleet(hosts)
-        elapsed = time.monotonic() - t_start
+        # Use one worker per host so this test does not rely on the fleet default.
+        results = osa_fleet(hosts, max_workers=len(hosts))
 
-        # 4 × 0.05 s serial = 0.2 s; parallel should finish < 0.15 s
-        self.assertLess(elapsed, 0.15, "fleet dispatches should run in parallel")
+        self.assertEqual(len(starts), len(hosts), "every host dispatch should start")
+        self.assertEqual(len(ends), len(hosts), "every host dispatch should finish")
+        self.assertLess(
+            max(starts.values()), min(ends.values()),
+            "fleet dispatch intervals should overlap",
+        )
         self.assertEqual(len(results), 4)
 
 

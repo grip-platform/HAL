@@ -440,3 +440,20 @@ def test_carbons_dated_change_never_touches_hydrogen_or_argon(monkeypatch):
     monkeypatch.setattr(ct, "_today", lambda: "2026-12-01")
     assert ct._resolve_pricing("gemini-4-hydrogen") == HYDROGEN_FLAT
     assert ct._resolve_pricing("gemini-4-argon") == ARGON_FROM_DECEMBER
+
+
+# Gemini 4 Neon, onboarded 2026-11-26. ai.google.dev/gemini-api/docs/pricing,
+# read 2026-11-26, Standard paid tier: "$3.00" in, "$15.00" out (thinking
+# included), "$0.15" cached, with no dated change and no prompt-length tier.
+NEON_FLAT = (3.00, 15.00, 0.15, 3.00)
+
+
+def test_neon_bills_a_flat_rate_with_no_dated_change(monkeypatch):
+    """Mutation: add a _PRICE_SCHEDULE row for gemini-4-neon, or price it at a
+    sibling's rate -> RED."""
+    monkeypatch.setattr(ct, "_today", lambda: "2026-11-26")
+    assert ct._resolve_pricing("gemini-4-neon") == NEON_FLAT
+    assert ct._resolve_pricing("gemini/gemini-4-neon") == NEON_FLAT
+    monkeypatch.setattr(ct, "_today", lambda: "2027-06-01")
+    assert ct._resolve_pricing("gemini-4-neon") == NEON_FLAT
+    assert ct._request_rates("gemini/gemini-4-neon", 900_000) == NEON_FLAT

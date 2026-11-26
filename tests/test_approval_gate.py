@@ -14,7 +14,45 @@ from lib.hal.approval_gate import (
     ApprovalRequest,
     _AUTO_APPROVE,
     _RISK_MAP,
+    _write_secure_json,
 )
+
+
+class TestWriteSecureJson(unittest.TestCase):
+    """Test the owner-only JSON writer."""
+
+    def test_a_failed_write_raises_its_own_error(self):
+        # json.dump fails after fdopen took the descriptor; the caller must see
+        # that TypeError, not an OSError from closing the descriptor twice.
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(TypeError):
+                _write_secure_json(os.path.join(folder, "pending.json"), {"bad": object()})
+
+    def test_a_failed_fdopen_closes_the_descriptor_once(self):
+        # If fdopen itself fails, even on an interrupt, the descriptor is still
+        # ours: it is closed exactly once and the original error reaches the caller.
+        for error in (OSError("fdopen failed"), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                opened, closed = [], []
+                real_open, real_close = os.open, os.close
+
+                def record_open(*args, **kwargs):
+                    fd = real_open(*args, **kwargs)
+                    opened.append(fd)
+                    return fd
+
+                def record_close(fd):
+                    closed.append(fd)
+                    real_close(fd)
+
+                with tempfile.TemporaryDirectory() as folder:
+                    with patch("lib.hal.approval_gate.os.open", side_effect=record_open), \
+                            patch("lib.hal.approval_gate.os.fdopen", side_effect=error), \
+                            patch("lib.hal.approval_gate.os.close", side_effect=record_close):
+                        with self.assertRaises(type(error)):
+                            _write_secure_json(os.path.join(folder, "pending.json"), {"ok": True})
+                self.assertEqual(len(opened), 1)
+                self.assertEqual(closed.count(opened[0]), 1)
 
 
 class TestApprovalLevel(unittest.TestCase):

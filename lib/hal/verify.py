@@ -14,6 +14,7 @@ Usage:
 """
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 
 
@@ -63,7 +64,7 @@ class Verifier:
 
         # Syntax check via py_compile
         result = subprocess.run(
-            ["python3", "-m", "py_compile", path],
+            [sys.executable, "-m", "py_compile", path],
             capture_output=True, text=True, timeout=10,
         )
         duration = (time.monotonic() - start) * 1000

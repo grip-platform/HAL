@@ -21,9 +21,15 @@ from pathlib import Path
 import pytest
 
 from tests._canonical_version import canonical_runtime_version
+from tests._bash import find_bash
 
 REPO = Path(__file__).resolve().parents[1]
 HAPPI = REPO / "happi.md"
+_BASH = find_bash()
+pytestmark = pytest.mark.skipif(
+    _BASH is None,
+    reason="no usable bash found on this machine (install Git Bash on Windows)",
+)
 
 _VOLATILE = ("id", "ts", "audit")
 _BODY = {
@@ -37,7 +43,7 @@ _BODY = {
 def _run(envelope: dict) -> list[dict]:
     """Dispatch one envelope through the assembled happi.md; return its events."""
     proc = subprocess.run(
-        ["bash", str(HAPPI), "run"],
+        [_BASH, str(HAPPI), "run"],
         input=json.dumps(envelope), capture_output=True, text=True, cwd=str(REPO),
         timeout=60,
     )

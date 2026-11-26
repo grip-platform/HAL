@@ -108,6 +108,10 @@ class _TempHome(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
 
+@unittest.skipUnless(
+    sys.platform == "darwin",
+    "exercises a macOS-only Find My status entry's /bin/sh fragment",
+)
 class FindMyStatusShellBehaviour(_TempHome):
     def test_fails_cleanly_when_grip_is_absent(self) -> None:
         r = _run_shell(self.src, home=self.tmp)
@@ -137,6 +141,10 @@ class FindMyStatusShellBehaviour(_TempHome):
         self.assertNotIn("should-not-run", r.stdout)
 
 
+@unittest.skipUnless(
+    sys.platform == "darwin",
+    "exercises a macOS-only Find My status entry's /bin/sh fragment",
+)
 class FindMyStatusHardening(_TempHome):
     """HAL#817: malformed CLAUDE_DIR values, and the tool's own failure."""
 

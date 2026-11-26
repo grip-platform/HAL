@@ -39,6 +39,7 @@ from lib.hal.kono.counters import (
     OPERATIONAL_CONTENT_PATTERNS,
 )
 from lib.hal.kono.lembed_guard import is_likely_crash_input, LembedInputTooRisky
+from lib.hal.kono.grip_embeddings import ensure_importable as _ensure_grip_embeddings
 
 _lembed_healthy: Optional[bool] = None
 _LEMBED_CACHE_TTL = 3600
@@ -121,7 +122,7 @@ def _read_lembed_cache() -> Optional[bool]:
         if _LEMBED_CACHE.exists():
             age = time.time() - _LEMBED_CACHE.stat().st_mtime
             if age < _LEMBED_CACHE_TTL:
-                return _LEMBED_CACHE.read_text().strip() == "ok"
+                return _LEMBED_CACHE.read_text(encoding="utf-8").strip() == "ok"
     except OSError:
         pass
     return None
@@ -161,7 +162,7 @@ def _write_lembed_cache(healthy: bool) -> None:
     """Persist lembed health status to disk."""
     try:
         _LEMBED_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        _LEMBED_CACHE.write_text("ok" if healthy else "broken")
+        _LEMBED_CACHE.write_text("ok" if healthy else "broken", encoding="utf-8")
     except OSError:
         pass
 
@@ -1427,7 +1428,9 @@ class MemorySubstrate(KonoLifecycleMixin, KonoEvolutionMixin, KonoPruningMixin, 
         project_path: Optional[str] = None
     ) -> Optional[int]:
         """
-        Store a memory via the full embedding pipeline (sqlite-vec + sqlite-lembed).
+        Store a memory via GRIP's embedding pipeline, which embeds through the
+        local Ollama daemon (nomic-embed-text). Without GRIP installed there is
+        no pipeline, and this returns None (HAL#925).
 
         Generates vector embedding, stores in embeddings table, then assigns
         KONO spatial coordinates for 4D retrieval. Ensures an active instance
@@ -1454,6 +1457,7 @@ class MemorySubstrate(KonoLifecycleMixin, KonoEvolutionMixin, KonoPruningMixin, 
             logger.debug("Skipping duplicate episodic content: %s", content[:60])
             return None
 
+        _ensure_grip_embeddings()
         try:
             from embeddings import EmbeddingEngine
             from embeddings.storage import store_embedding

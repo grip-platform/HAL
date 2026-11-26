@@ -169,13 +169,16 @@ class UserAdapter:
         Strategy: highest confidence wins; recency breaks ties.
         """
         resolved: dict[str, str] = dict(_DEFAULTS)
-        best: dict[str, tuple[float, float]] = {}
+        best: dict[str, tuple[float, float, int]] = {}
 
-        for obs in self._observations:
-            current = best.get(obs.dimension, (0.0, 0.0))
-            if obs.confidence > current[0] or (obs.confidence == current[0] and obs.observed_at > current[1]):
+        for insertion_order, obs in enumerate(self._observations):
+            # Highest confidence wins, then the newer timestamp, then the later
+            # insertion: on a coarse clock two observations can share observed_at.
+            rank = (obs.confidence, obs.observed_at, insertion_order)
+            current = best.get(obs.dimension, (0.0, 0.0, -1))
+            if rank > current:
                 resolved[obs.dimension] = obs.value
-                best[obs.dimension] = (obs.confidence, obs.observed_at)
+                best[obs.dimension] = rank
 
         self._profile = UserProfile(
             user_id=self._user_id,
@@ -190,7 +193,7 @@ def _load_profile(user_id: str) -> UserProfile:
     path = os.path.join(_PROFILES_DIR, f"{user_id}.json")
     if os.path.exists(path):
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             return UserProfile(
                 user_id=data.get("user_id", user_id),
@@ -207,5 +210,5 @@ def _save_profile(profile: UserProfile) -> None:
     """Persist profile to disk."""
     os.makedirs(_PROFILES_DIR, exist_ok=True)
     path = os.path.join(_PROFILES_DIR, f"{profile.user_id}.json")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(profile.to_dict(), f, indent=2)

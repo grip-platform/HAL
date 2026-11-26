@@ -4,7 +4,10 @@ import os
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
+from lib.hal import tracing
 from lib.hal.tracing import Span, Tracer
 
 
@@ -55,6 +58,26 @@ class TestTracer(unittest.TestCase):
         tracer.record("manual_span", duration_ms=150, model="groq")
         self.assertEqual(len(tracer.spans), 1)
         self.assertAlmostEqual(tracer.spans[0].duration_ms, 150, delta=50)
+
+    def test_exported_span_timestamps_agree_with_duration(self):
+        # A coarse wall clock (Python 3.12 on Windows) can read the same instant
+        # at both ends while perf_counter measures a real interval.
+        tracer = Tracer("test")
+        ticks = iter([5.0, 5.25])
+        fake_clock = SimpleNamespace(time=lambda: 1000.0, perf_counter=lambda: next(ticks))
+        with mock.patch.object(tracing, "time", fake_clock):
+            with tracer.span("operation"):
+                pass
+        exported = tracer.spans[0].to_dict()
+        self.assertAlmostEqual(exported["duration_ms"], 250.0)
+        self.assertAlmostEqual((exported["end_time"] - exported["start_time"]) * 1000, 250.0, places=6)
+
+    def test_record_keeps_the_given_duration_exactly(self):
+        tracer = Tracer("test")
+        tracer.record("manual_span", duration_ms=150)
+        span = tracer.spans[0]
+        self.assertEqual(span.duration_ms, 150.0)
+        self.assertAlmostEqual((span.end_time - span.start_time) * 1000, 150.0, places=2)
 
     def test_summary(self):
         tracer = Tracer("test-svc")

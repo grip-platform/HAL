@@ -173,7 +173,7 @@ def _config_or_reason():
     top level is not an object, is.
     """
     try:
-        value = json.loads(Path(os.environ.get('HAL_W4_CONFIG', str(CONFIG))).read_text())
+        value = json.loads(Path(os.environ.get('HAL_W4_CONFIG', str(CONFIG))).read_text(encoding="utf-8"))
     except (OSError, TypeError):
         return {}, None
     except ValueError:

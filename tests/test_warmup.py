@@ -115,7 +115,7 @@ class TestWarmupBackground(unittest.TestCase):
         """cli.py must pass verbose=not args['status'] — interactive mode gets True."""
         import ast, os
         cli_path = os.path.join(os.path.dirname(__file__), "..", "lib", "hal", "cli.py")
-        with open(cli_path) as f:
+        with open(cli_path, encoding="utf-8") as f:
             source = f.read()
         # The call must use 'not args["status"]' not 'args["status"]'
         self.assertIn('verbose=not args["status"]', source,

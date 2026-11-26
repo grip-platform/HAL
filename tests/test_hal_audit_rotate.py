@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+
+import pytest
 
 from lib.hal.gateway_failover import _default_sink
 
@@ -60,6 +63,10 @@ def test_a_rename_between_two_sink_events_loses_neither(capsys):
     assert str(rotated) in capsys.readouterr().out
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason=(
+    "Windows rename requires FILE_SHARE_DELETE on the open handle; this test's "
+    "handle and HAL's short-lived event handles do not request it"
+))
 def test_a_handle_opened_before_the_rename_writes_into_the_rotated_file():
     _default_sink({"event": "served", "n": 1})
     live = _live()

@@ -16,12 +16,18 @@ from pathlib import Path
 
 import pytest
 
-from tests._public_tree import folder_absent, reason
+from tests._public_tree import reason, withheld
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "build-happi.py"
-# Public HAL leaves scripts/ out, so on a public checkout every test here is
-# skipped with that reason (HAL#859); in the full repository they all run.
-pytestmark = pytest.mark.skipif(folder_absent("scripts"), reason=reason("scripts"))
+# Public HAL leaves build-happi.py out of scripts/ (which otherwise ships only
+# install-starter.sh), so on a public checkout every test here is skipped with
+# that reason (HAL#859); in the full repository they all run. withheld(), not
+# the coarser folder_absent(), because scripts/ itself now exists on a public
+# checkout (it ships install-starter.sh) -- folder_absent("scripts") would be
+# False there and this skip would never fire.
+pytestmark = pytest.mark.skipif(
+    withheld("scripts/build-happi.py"), reason=reason("scripts/build-happi.py")
+)
 
 # A genuinely valid layer set, which means it must declare HAPPI_VERSION in both
 # languages and accept its own version -- validate_layers enforces that (#516).

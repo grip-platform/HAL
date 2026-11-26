@@ -76,8 +76,8 @@ class HALDaemon:
 
         # Child: detach from terminal
         os.setsid()
-        sys.stdin = open(os.devnull, "r")
-        sys.stdout = open(_LOG_FILE, "a")
+        sys.stdin = open(os.devnull, "r", encoding="utf-8")
+        sys.stdout = open(_LOG_FILE, "a", encoding="utf-8")
         sys.stderr = sys.stdout
 
         self.start()
@@ -136,7 +136,7 @@ class HALDaemon:
     def _write_pid(self) -> None:
         """Write PID file."""
         os.makedirs(os.path.dirname(_PID_FILE), exist_ok=True)
-        with open(_PID_FILE, "w") as f:
+        with open(_PID_FILE, "w", encoding="utf-8") as f:
             f.write(str(os.getpid()))
 
     def _cleanup(self) -> None:
@@ -150,7 +150,7 @@ class HALDaemon:
     def _read_pid_static() -> int:
         """Read PID from file. Returns 0 if not found."""
         try:
-            with open(_PID_FILE, "r") as f:
+            with open(_PID_FILE, "r", encoding="utf-8") as f:
                 return int(f.read().strip())
         except (FileNotFoundError, ValueError):
             return 0
@@ -166,7 +166,7 @@ def _log(message: str, **kwargs) -> None:
     extra = " ".join(f"{k}={v}" for k, v in kwargs.items())
     line = f"[{timestamp}] {message} {extra}\n"
     try:
-        with open(_LOG_FILE, "a") as f:
+        with open(_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line)
     except OSError:
         pass

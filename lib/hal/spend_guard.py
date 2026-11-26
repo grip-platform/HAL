@@ -93,6 +93,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -100,12 +101,19 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Optional, Tuple
 from urllib.parse import urlsplit
 
-try:  # POSIX: serialise the daily ledger across processes (_ledger_lock)
-    import fcntl
-except ImportError:  # Windows: the per-process lock is all there is
-    fcntl = None
+from lib.hal.file_lock import lock_within, unlock
 
 _log = logging.getLogger("hal.spend_guard")
+
+#: How long the daily-ledger lock may stall a request asking permission to
+#: spend. Failure goes through _update_entry's documented fail-closed path.
+_LEDGER_LOCK_TIMEOUT_S = 2.0
+
+#: Mirrors lib/hal/locked_json.py's replace-retry shape. Kept local because
+#: GRIP loads this standard-library-only module by path; changes there should
+#: prompt a check of these matching bounds too.
+_REPLACE_RETRY_DEADLINE_S = 1.0
+_REPLACE_RETRY_POLL_S = 0.005
 
 #: Overrides the policy file's path. A missing or malformed file there refuses
 #: every paid source, exactly as the default path does.
@@ -627,20 +635,40 @@ def _today_entry(name: str, day: str) -> Optional[dict]:
 
 @contextlib.contextmanager
 def _ledger_lock(path: Path) -> Iterator[None]:
-    """This process's lock and, on POSIX, an exclusive lock on a sibling file, so
-    hal-server, a Happi process and a CLI never lose each other's spend."""
+    """Hold process-local and bounded sibling locks for ledger updates.
+
+    An acquisition timeout raises OSError so _update_entry uses its existing
+    fail-closed refusal instead of leaving live traffic blocked forever.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with _DAILY_LOCK, open(path.with_name(path.name + ".lock"), "a", encoding="utf-8") as handle:
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield
+        if not lock_within(handle, _LEDGER_LOCK_TIMEOUT_S):
+            raise OSError(f"{path.name}.lock is held by another process "
+                          f"past {_LEDGER_LOCK_TIMEOUT_S}s")
+        try:
+            yield
+        finally:
+            unlock(handle)
 
 
 def _write_days(path: Path, days: dict) -> None:
     kept = dict(sorted(days.items())[-_KEEP_DAYS:])
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps({"days": kept}, indent=1, sort_keys=True), encoding="utf-8")
-    tmp.replace(path)
+    _replace_days(tmp, path)
+
+
+def _replace_days(tmp: Path, path: Path) -> None:
+    """Match locked_json's bounded Windows replace retry, kept local above."""
+    deadline = time.monotonic() + _REPLACE_RETRY_DEADLINE_S
+    while True:
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(_REPLACE_RETRY_POLL_S)
 
 
 def _update_entry(name: str, day: str, change: Callable[[dict], None]) -> Optional[dict]:

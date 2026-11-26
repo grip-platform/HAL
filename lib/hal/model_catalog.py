@@ -83,6 +83,9 @@ _CATALOG: dict[str, ModelInfo] = {
     # Gemini 4 Hydrogen: flat rate, no dated change. GA 2026-11-12.
     "gemini-4-hydrogen": ModelInfo("gemini-4-hydrogen", "google", 1_048_576, 1.50, 7.50,
         ("reasoning", "code", "agentic", "long-context", "value"), 65_536),
+    # Gemini 4 Neon: flat rate, no dated change. GA 2026-11-18.
+    "gemini-4-neon": ModelInfo("gemini-4-neon", "google", 1_048_576, 3.0, 15.0,
+        ("reasoning", "code", "agentic", "science", "long-context"), 65_536),
     # Google Gemma 4 (open weights, Apache 2.0 — released 2 Apr 2026)
     "google/gemma-4-31b-it": ModelInfo("google/gemma-4-31b-it", "openrouter", 256_000, 0.14, 0.40,
         ("reasoning", "code", "agentic", "multimodal", "open-source"), 131_072),

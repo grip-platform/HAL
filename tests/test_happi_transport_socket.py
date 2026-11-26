@@ -9,6 +9,13 @@ No mocking — the server really binds, accept()s, and streams.
 """
 from __future__ import annotations
 
+import socketserver
+
+import pytest
+
+if not hasattr(socketserver, "UnixStreamServer"):
+    pytest.skip("AF_UNIX sockets are not available on this platform", allow_module_level=True)
+
 import json
 import os
 import socket as _socket
@@ -17,12 +24,11 @@ import threading
 from pathlib import Path
 from typing import Iterator
 
-import pytest
-
 from lib.hal.happi.transports.socket_transport import (
     DEFAULT_SOCKET_PATH,
     build_socket_server,
 )
+from lib.hal.happi.transports import socket_transport
 
 
 @pytest.fixture
@@ -221,6 +227,52 @@ def test_build_socket_server_unlinks_stale_path(tmp_path: Path):
             os.unlink(path)
         except FileNotFoundError:
             pass
+
+
+def test_explicit_server_class_is_honoured_when_default_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    calls = []
+
+    class FakeServer:
+        def __init__(self, path, handler):
+            calls.append((path, handler))
+
+        def serve_forever(self):
+            calls.append("served")
+
+        def server_close(self):
+            calls.append("closed")
+
+    monkeypatch.setattr(socket_transport, "ThreadingUnixStreamServer", None)
+    path = str(tmp_path / "explicit.sock")
+
+    server = socket_transport.build_socket_server(path, FakeServer)
+
+    assert isinstance(server, FakeServer)
+    assert calls == [(path, socket_transport.HappiSocketHandler)]
+
+    socket_transport.serve_socket(path, FakeServer)
+
+    assert calls[1:] == [
+        (path, socket_transport.HappiSocketHandler),
+        "served",
+        "closed",
+    ]
+
+
+def test_missing_server_class_reports_platform_and_working_transports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(socket_transport, "ThreadingUnixStreamServer", None)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        socket_transport.build_socket_server(str(tmp_path / "missing.sock"))
+
+    message = str(exc_info.value)
+    assert socket_transport.sys.platform in message
+    assert "stdio transport" in message
+    assert "HTTP transport" in message
 
 
 # --- Cross-transport parity -------------------------------------------------

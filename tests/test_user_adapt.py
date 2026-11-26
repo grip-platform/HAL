@@ -50,6 +50,17 @@ class TestUserAdapter(unittest.TestCase):
         # Second observation is more recent, should win
         self.assertEqual(adapter.profile.preferences["style"], "casual")
 
+    def test_equal_timestamps_resolve_by_insertion_order(self):
+        # On a coarse clock (Python 3.12 on Windows) both observations can share
+        # observed_at, and the later one must still win.
+        adapter = UserAdapter()
+        adapter.observe("style", "formal", confidence=0.8)
+        adapter.observe("style", "casual", confidence=0.8)
+        for observation in adapter._observations:
+            observation.observed_at = 1000.0
+        adapter._resolve_preferences()
+        self.assertEqual(adapter.profile.preferences["style"], "casual")
+
 
 class TestObserveFromFeedback(unittest.TestCase):
 

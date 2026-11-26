@@ -31,7 +31,7 @@ providers:
     base_url: https://generativelanguage.googleapis.com/v1beta/openai
     api_key_source: env:GRIP_GEMINI_API_KEY
     # gemma-4-27b retired upstream (2026-08-30); Gemma 4 line is 26b-a4b-it / 31b-it.
-    models: [gemini-3.1-pro-preview, gemma-4-31b-it, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-4-argon, gemini-3.6-flash, gemini-3.8-flash, gemini-4-carbon, gemini-4-hydrogen]
+    models: [gemini-3.1-pro-preview, gemma-4-31b-it, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-4-argon, gemini-3.6-flash, gemini-3.8-flash, gemini-4-carbon, gemini-4-hydrogen, gemini-4-neon]
     # gemini-3.5-flash deprecated 2026-10-08 (requests routed to gemini-3.6-flash); kept
     # while accepted. gemini-3.6-flash and gemini-3.8-flash: Stable, served 2026-10-18.
     # gemini-4-argon (GA 2026-10-13) LAST on purpose: position is behaviour for a
@@ -41,6 +41,7 @@ providers:
     # config/providers.yaml for the full note.
     # gemini-4-carbon and gemini-4-hydrogen added 2026-11-24 (dogfood-domain
     # phase 2 family 6) — see config/providers.yaml for the full note.
+    # gemini-4-neon added 2026-11-26, appended LAST — same note.
 
   - name: qwen
     type: cloud
@@ -188,13 +189,13 @@ routing:
   quality_cost:
     simple: groq/openai/gpt-oss-120b
     standard: openrouter/google/gemma-4-31b-it
-    complex: gemini/gemini-3.1-pro-preview
+    complex: gemini/gemini-4-carbon
     local: ollama/gemma4:26b
 
   tier_chains:
     free:    [ollama/gemma4:26b, ollama/gemma4:e4b]
     cheap:   [qwen/qwen3.5-flash, openrouter/google/gemma-4-31b-it, groq/openai/gpt-oss-120b]
     mid:     [gemini/gemini-3.5-flash-lite, openrouter/google/gemma-4-31b-it, deepseek/deepseek-flash]
-    premium: [xai/grok-4.20-0309-reasoning, gemini/gemini-3.1-pro-preview, deepseek/deepseek-v4-pro, groq/openai/gpt-oss-120b]
+    premium: [xai/grok-4.20-0309-reasoning, gemini/gemini-4-carbon, deepseek/deepseek-v4-pro, groq/openai/gpt-oss-120b]
 
   council: [groq/openai/gpt-oss-120b, openrouter/google/gemma-4-31b-it, gemini/gemini-3.5-flash-lite, xai/grok-4.6, qwen/qwen3.5-flash, deepseek/deepseek-flash]

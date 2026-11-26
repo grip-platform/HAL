@@ -16,6 +16,7 @@ Usage:
 import ast
 import os
 import subprocess
+import sys
 import textwrap
 from dataclasses import dataclass
 
@@ -301,12 +302,12 @@ def _check_compile(source: str, target_path: str, issues: list[ValidationIssue])
     tmp_path = ""
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False,
+            mode="w", suffix=".py", delete=False, encoding="utf-8",
         ) as f:
             f.write(source)
             tmp_path = f.name
         result = subprocess.run(
-            ["python3", "-m", "py_compile", tmp_path],
+            [sys.executable, "-m", "py_compile", tmp_path],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
@@ -348,7 +349,7 @@ def _load_reference_module() -> str:
     """Load a reference HAL module as exemplar for conventions."""
     ref_path = os.path.join(_MODULE_DIR, "quality_scorer.py")
     try:
-        with open(ref_path) as f:
+        with open(ref_path, encoding="utf-8") as f:
             return f.read()[:2000]
     except OSError:
         return "# Use frozen dataclasses, dispatch tables, functions < 30 lines"

@@ -4,11 +4,15 @@ Verifies that parse_model_address() correctly identifies mlx_vlm as a known
 provider prefix, returning (provider, model) tuples, and that existing
 providers are unaffected.
 """
-import os
-import sys
 import unittest
+from pathlib import Path
 
 from lib.hal.registry import parse_model_address
+
+# The checkout under test, never the home install: run from a worktree or a CI
+# checkout, ~/.hal is other code or absent (on 2026-11-26 the live ~/.hal was 56
+# commits behind main, and with an empty HOME these tests failed).
+REPO = Path(__file__).resolve().parent.parent
 
 
 class TestMlxVlmAddressParsing(unittest.TestCase):
@@ -39,8 +43,7 @@ class TestMlxVlmYamlParsing(unittest.TestCase):
 
     def _load_mlx_config(self):
         from lib.hal.registry import _load_yaml_config
-        import os
-        path = os.path.expanduser("~/.hal/config/providers.yaml")
+        path = str(REPO / "config" / "providers.yaml")
         configs, _ = _load_yaml_config(path)
         return next((c for c in configs if c.name == "mlx_vlm"), None)
 

@@ -39,7 +39,10 @@ spend guard removed it, Step 5h),
 (``benchmark.py``) and ``state/hal/vault-index.json`` (``obsidian_vault.py``)
 under the ``HAL_HOME`` the run started with. Where that is the live ``~/.hal``,
 those writes still reach it; moving them needs those constants resolved at call
-time, which is separate work.
+time, which is separate work. Since 2026-11-26 this file defaults ``HAL_HOME``
+and ``HAL_ROOT`` to the checkout when a run leaves them unset, as CI does, so
+those constants and any configs read at import come from the checkout, never
+the live home; an explicit value is kept.
 
 No test may read the operator's Claude token store either (added 2026-10-05,
 InfiniteMachine v2 Step 5b). The wire and the gateway now put each request on
@@ -59,6 +62,17 @@ import pytest
 
 #: GRIP's override of its token store's active file (see the docstring).
 TOKEN_STORE_ENV = "GRIP_RELAY_CCH_OAUTH_PATH"
+
+#: The checkout this suite belongs to.
+CHECKOUT = Path(__file__).resolve().parent.parent
+
+# Set when this conftest loads, before the modules under tests/ are collected,
+# so a constant they read at import sees the checkout (a root-level conftest or
+# a plugin would load earlier; this repository has neither). CI sets both; a
+# local run that left them unset resolved those constants to the live ~/.hal.
+# An explicit value is kept.
+os.environ.setdefault("HAL_HOME", str(CHECKOUT))
+os.environ.setdefault("HAL_ROOT", str(CHECKOUT))
 
 
 @pytest.fixture(autouse=True)

@@ -316,7 +316,7 @@ class ProviderRegistry:
 def _load_yaml_config(path: str) -> tuple[list[ProviderConfig], Optional[RoutingConfig]]:
     """Parse providers.yaml into ProviderConfig list + RoutingConfig."""
     if path.endswith(".json"):
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = _parse_simple_yaml(path)
@@ -377,7 +377,7 @@ def _parse_simple_yaml(path: str) -> dict:
     Supports: top-level keys, list items with key: value pairs.
     For complex configs, use JSON format instead.
     """
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
     state = _YamlParseState()

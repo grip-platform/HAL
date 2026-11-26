@@ -133,5 +133,5 @@ class Benchmark:
         """Persist benchmark result."""
         os.makedirs(_RESULTS_DIR, exist_ok=True)
         path = os.path.join(_RESULTS_DIR, f"bench-{int(result.timestamp)}.json")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(result.to_dict(), f, indent=2)

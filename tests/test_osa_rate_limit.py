@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import time
@@ -38,6 +39,7 @@ from lib.hal.osa.provenance import ProvenanceType
 from lib.hal.osa.rate_limit import (
     RateLimit,
     RateLimitExceeded,
+    _connect,
     check_and_record,
     _reset_for_tests as _reset_rate,
 )
@@ -135,6 +137,51 @@ class Concurrency(unittest.TestCase):
     def tearDown(self) -> None:
         import shutil
         shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_racing_first_calls_never_crash(self) -> None:
+        """Twenty rounds of ten threads making the first calls on a fresh database (HAL#919).
+
+        Before the setup lock, about one round in five crashed one caller on
+        "database is locked" from the journal-mode switch, instead of a
+        recorded dispatch or a clean RateLimitExceeded. Each round must also
+        keep the cap (five recorded, five refused) and leave the file in WAL mode.
+        """
+        def attempt(db: Path, barrier: threading.Barrier, outcomes: list) -> None:
+            try:
+                barrier.wait()
+                check_and_record("shared", RateLimit(window_s=60, max_calls=5), db_path=db)
+                outcomes.append("recorded")
+            except RateLimitExceeded:
+                outcomes.append("refused")
+            except Exception as exc:  # noqa: BLE001 - every other failure is the defect here
+                outcomes.append(repr(exc))
+
+        for round_no in range(20):
+            db = Path(self._tmpdir) / f"fresh-{round_no}.db"
+            barrier = threading.Barrier(10, timeout=30)
+            outcomes: list = []
+            threads = [threading.Thread(target=attempt, args=(db, barrier, outcomes)) for _ in range(10)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+            self.assertFalse(any(t.is_alive() for t in threads), "a caller hung")
+            self.assertEqual(sorted(outcomes), ["recorded"] * 5 + ["refused"] * 5, f"round {round_no}")
+            conn = sqlite3.connect(str(db))
+            try:
+                (mode,) = conn.execute("PRAGMA journal_mode").fetchone()
+            finally:
+                conn.close()
+            self.assertEqual(str(mode).lower(), "wal", f"round {round_no}")
+
+    def test_a_connection_whose_setup_fails_is_closed(self) -> None:
+        """The caller's finally never sees a connection that failed in setup, so _connect closes it."""
+        conn = MagicMock()
+        conn.execute.side_effect = sqlite3.OperationalError("database is locked")
+        with patch("lib.hal.osa.rate_limit.sqlite3.connect", return_value=conn):
+            with self.assertRaises(sqlite3.OperationalError):
+                _connect(self.db)
+        conn.close.assert_called_once()
 
     def test_concurrent_dispatches_respect_cap(self) -> None:
         """Ten threads race to dispatch; at cap=5, exactly 5 must succeed."""

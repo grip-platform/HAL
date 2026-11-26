@@ -744,7 +744,14 @@ def _relay_council_failopen(handler, payload: dict, model: str, started: float, 
     """VPS council unreachable -> serve ONE fast Pool-B model via the existing
     same-wire path so the default DEGRADES instead of dying (ADR 0012 fail-open)."""
     import os
-    fallback = os.environ.get("GRIP_COUNCIL_FAILOPEN_MODEL", "gemini-3.1-pro-preview")
+    # gemini-4-hydrogen is the fail-open model (V>> 2026-11-26): this
+    # function's own docstring above asks for a FAST model. Through this
+    # gateway, Hydrogen answered a short prompt in a median 2.56s and a
+    # council-sized one in 3.95s, against Carbon's 6.0s and 11.32s and Neon's
+    # 14.64s and 10.60s (docs/measurements/2026-11-26-gateway-fail-open-
+    # latency.md). It is the single exception to model-dogfood decision 6,
+    # pinned by tests/test_gemini_catalogue_parity.py.
+    fallback = os.environ.get("GRIP_COUNCIL_FAILOPEN_MODEL", "gemini-4-hydrogen")
     try:
         from lib.hal.gateway_egress import same_wire_provider
         prov = same_wire_provider(fallback)

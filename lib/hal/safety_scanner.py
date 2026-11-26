@@ -58,7 +58,7 @@ class SafetyScanner:
 
     def scan_file(self, path: str) -> list[SecurityIssue]:
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 code = f.read()
             lang = "python" if path.endswith(".py") else ""
             return self.scan_code(code, lang)

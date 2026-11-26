@@ -97,9 +97,9 @@ def test_reclaim_port_sigterm_then_sigkill_on_straggler(monkeypatch):
     monkeypatch.setattr(port_reclaim.os, "kill", lambda pid, sig: sent.append((pid, sig)))
 
     assert reclaim_port(4010, grace_s=0.2) == [holder]
-    assert (holder, signal.SIGTERM) in sent
-    assert (holder, signal.SIGKILL) in sent
-    assert sent.index((holder, signal.SIGTERM)) < sent.index((holder, signal.SIGKILL))
+    assert sent[0] == (holder, signal.SIGTERM)
+    assert sent[-1] == (holder, port_reclaim.HARD_KILL_SIGNAL)
+    assert len(sent) > 1
 
 
 def test_reclaim_port_graceful_exit_no_sigkill(monkeypatch):
@@ -110,8 +110,7 @@ def test_reclaim_port_graceful_exit_no_sigkill(monkeypatch):
     monkeypatch.setattr(port_reclaim.os, "kill", lambda pid, sig: sent.append((pid, sig)))
 
     assert reclaim_port(4010, grace_s=1.0) == [holder]
-    assert (holder, signal.SIGTERM) in sent
-    assert (holder, signal.SIGKILL) not in sent
+    assert sent == [(holder, signal.SIGTERM)]
 
 
 # --- the Goodhart anchor: real subprocess, real lsof, real kill -----------

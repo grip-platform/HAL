@@ -310,7 +310,7 @@ class LimitSentinel:
         if not os.path.exists(_STATE_PATH):
             return
         try:
-            with open(_STATE_PATH, "r") as f:
+            with open(_STATE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             with self._lock:
                 for name, raw in data.items():

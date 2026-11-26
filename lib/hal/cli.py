@@ -560,7 +560,7 @@ def _load_tool_unfriendly_from_yaml() -> dict[str, str]:
     if not config_path.exists():
         return {}
     try:
-        with config_path.open() as f:
+        with config_path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
     except (OSError, yaml.YAMLError):
         return {}

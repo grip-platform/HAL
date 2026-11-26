@@ -5,7 +5,7 @@ Two properties, kept apart on purpose:
 ``atomic``      A reader sees the old file or the new one, never half of one. Every
                 write goes to a temporary file beside the target, is flushed to
                 disk, and is then renamed over the target with ``os.replace``.
-``serialised``  A read-modify-write holds an exclusive ``fcntl`` lock from before its
+``serialised``  A read-modify-write holds an exclusive advisory lock from before its
                 read until after its rename, so two writers -- threads or processes --
                 never interleave and lose each other's change.
 
@@ -21,8 +21,7 @@ The wait for the lock is bounded. A writer that cannot get it in time raises
 ``LockTimeout`` and changes nothing. A caller on a request path catches it and goes
 on, because a state file must never stall the traffic it describes.
 
-Without ``fcntl`` (Windows) writes stay atomic but are not serialised between
-processes; threads in one process are still serialised by an in-process lock.
+The lock protocol works across processes on both POSIX and Windows.
 """
 from __future__ import annotations
 
@@ -34,10 +33,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator, Union
 
-try:
-    import fcntl
-except ImportError:  # Windows
-    fcntl = None  # type: ignore[assignment]
+from lib.hal import file_lock
 
 PathLike = Union[str, Path]
 
@@ -96,7 +92,7 @@ def write_json(path: PathLike, data: dict, *, mode: int = 0o600) -> None:
         raise
     os.close(fd)
     try:
-        os.replace(tmp, target)
+        _replace(tmp, target)
     except BaseException:
         _remove_quietly(tmp)
         raise
@@ -118,8 +114,21 @@ def _remove_quietly(path: Path) -> None:
         pass
 
 
+def _replace(tmp: Path, target: Path) -> None:
+    """Replace atomically, retrying transient Windows sharing violations briefly."""
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            os.replace(tmp, target)
+            return
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(_POLL_S)
+
+
 def _thread_lock(target: Path) -> threading.Lock:
-    """One lock per file within this process (the only guard where fcntl is missing)."""
+    """One lock per file within this process, paired with the process lock."""
     key = str(target)
     with _THREAD_LOCKS_GUARD:
         return _THREAD_LOCKS.setdefault(key, threading.Lock())
@@ -127,15 +136,12 @@ def _thread_lock(target: Path) -> threading.Lock:
 
 @contextmanager
 def _locked(target: Path, timeout: float) -> Iterator[None]:
-    """Hold this process's lock for ``target`` and, with fcntl, its ``.lock`` file."""
+    """Hold this process's lock for ``target`` and its portable ``.lock`` file."""
     deadline = time.monotonic() + max(0.0, timeout)
     local = _thread_lock(target)
     if not local.acquire(timeout=max(0.0, timeout)):
         raise LockTimeout(f"{target.name} is locked by another thread")
     try:
-        if fcntl is None:
-            yield
-            return
         with _file_lock(target.with_name(target.name + ".lock"), deadline):
             yield
     finally:
@@ -145,18 +151,16 @@ def _locked(target: Path, timeout: float) -> Iterator[None]:
 @contextmanager
 def _file_lock(lock_path: Path, deadline: float) -> Iterator[None]:
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    held = False
     try:
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise LockTimeout(f"{lock_path.name} is held by another process")
-                time.sleep(_POLL_S)
+        if not file_lock.lock_within(fd, max(0.0, deadline - time.monotonic())):
+            raise LockTimeout(f"{lock_path.name} is held by another process")
+        held = True
         yield
     finally:
-        os.close(fd)  # closing the descriptor releases the lock
+        if held:
+            file_lock.unlock(fd)
+        os.close(fd)
 
 
 __all__ = ["LockTimeout", "read_json", "update_json", "write_json"]

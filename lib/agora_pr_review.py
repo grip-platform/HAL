@@ -52,6 +52,7 @@ import logging
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -759,7 +760,8 @@ def _log_unusable_judge_reply(raw: str, reason: str) -> None:
                    text[:_UNUSABLE_REPLY_EXCERPT], text[-_UNUSABLE_REPLY_EXCERPT:])
 
 
-# The judge (gemini-3.1-pro-preview) is a THINKING model: its thinking tokens
+# The judge (gemini-3.1-pro-preview when this was written; gemini-4-carbon from
+# 2026-11-26, see _JUDGE_RUNG_MAX_TOKENS) is a THINKING model: its thinking tokens
 # count against the Gemini `maxOutputTokens` budget, sharing the pool with the
 # visible response. `_build_envelope`'s default 2048 is fatally tight here —
 # thinking on a 3-speaker synthesis is large AND variable (probed at
@@ -776,6 +778,25 @@ def _log_unusable_judge_reply(raw: str, reason: str) -> None:
 # Forward-anchor: test_judge_envelope_has_ample_max_tokens. Ported from GRIP
 # (CodeTonight-SA/GRIP#3324).
 _JUDGE_MAX_TOKENS = 8192
+
+# Per-judge overrides of _JUDGE_MAX_TOKENS, keyed by provider address (mirrors
+# GRIP's lib/agora_pr_review._JUDGE_RUNG_MAX_TOKENS). Gemini 4 Carbon gets 32768,
+# from Google's migration guide (ai.google.dev/gemini-api/docs/
+# whats-new-gemini-4-carbon, read 2026-11-26): "Existing apps with a limit lower
+# than 32K: Raise max_output_tokens to at least 32,768." A probe the same day spent
+# 61-89 thinking tokens on a one-word prompt and returned no text at a 64-token
+# cap. It is a cap, billed only as used.
+_JUDGE_RUNG_MAX_TOKENS: dict[str, int] = {
+    "gemini/gemini-4-carbon": 32768,
+}
+
+# HAL's HAPPI providers keep their own HTTP timeout (120 s in
+# lib/hal/happi/providers/gemini.py) unless the envelope's flags.timeout_s says
+# otherwise, so the judge's subprocess limit alone never reaches the model call:
+# on 2026-11-26 two of five replayed Carbon judgements came back empty at about
+# 121 s while the subprocess allowed 180 s (GRIP#10013). The provider is told a
+# few seconds less than the subprocess, so it reports its own timeout first.
+_JUDGE_PROVIDER_TIMEOUT_MARGIN_S = 5
 
 # Speaker-side twin of _JUDGE_MAX_TOKENS (mirrors GRIP 5d90d74a). A thinking
 # model spends reasoning tokens out of the SAME max_tokens budget as its
@@ -860,7 +881,9 @@ def _cited_block(rel: str, line_no: int, root: Path) -> str:
         return (f"{header}\nINVALID PATH (absolute — outside the checkout); "
                 "treat this concern as unverified.")
     candidate = (root / rel).resolve()
-    if not str(candidate).startswith(str(root) + "/"):
+    try:
+        candidate.relative_to(root)
+    except ValueError:
         return (f"{header}\nINVALID PATH (escapes the checkout); "
                 "treat this concern as unverified.")
     if not candidate.is_file():
@@ -935,7 +958,9 @@ def _dispatch_judge(
         # setdefault (not envelope["flags"][...]=) so this override never assumes
         # _build_envelope's "flags" key — a future change to that shared builder
         # degrades to an empty dict here rather than KeyError-crashing dispatch.
-        envelope.setdefault("flags", {})["max_tokens"] = _JUDGE_MAX_TOKENS
+        flags = envelope.setdefault("flags", {})
+        flags["max_tokens"] = _JUDGE_RUNG_MAX_TOKENS.get(judge_provider, _JUDGE_MAX_TOKENS)
+        flags["timeout_s"] = max(1, int(timeout) - _JUDGE_PROVIDER_TIMEOUT_MARGIN_S)
         raw = _call_happi(envelope, hal_bin, timeout)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Judge dispatch exception (provider=%s): %s", judge_provider, exc)
@@ -1543,6 +1568,25 @@ def _converge_step(
     )
 
 
+def _run_sitting(converge, max_depth: int) -> ImproveResult:
+    """One sitting, with a fixed-point registry of its own.
+
+    Every sitting is the same caller to the kernel (review_pr's converge closure),
+    so a registry shared across sittings, even one namespaced by caller (HAL#899),
+    let a sitting that seated nobody register ``fingerprint({})`` and stop every
+    later sitting on the machine at depth 0 (CodeTonight-SA/GRIP#9966, HAL#895).
+    A sitting's fixed points describe that sitting's PR only, so they stay with it.
+    """
+    with tempfile.TemporaryDirectory(prefix="agora-sitting-") as folder:
+        kernel = InnerspeakerGo(
+            converge=converge,
+            threshold=AGORA_THRESHOLD,
+            max_depth=max_depth,
+            fixed_points_path=Path(folder) / "fixed-points.jsonl",
+        )
+        return kernel({})
+
+
 _DEFER_ISSUE_LABELS = ("enhancement", "agora-defer")
 """Labels attached to a DEFER follow-up issue.
 
@@ -1804,12 +1848,7 @@ def review_pr(
         attempts=speaker_failures,
     )
 
-    kernel = InnerspeakerGo(
-        converge=converge,
-        threshold=AGORA_THRESHOLD,
-        max_depth=max_depth,
-    )
-    result = kernel({})
+    result = _run_sitting(converge, max_depth)
 
     outputs = result.state
     plain = outputs.get("plain_language", "")

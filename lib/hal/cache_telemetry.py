@@ -1,6 +1,7 @@
 """HAL Cache Telemetry — per-call prompt-cache JSONL logger.
 
-Appends one JSON line per LLM call to ~/.hal/state/hal/cache_calls.jsonl.
+Appends one JSON line per LLM call to $HAL_HOME/state/hal/cache_calls.jsonl
+(default ~/.hal, as set when this module is imported).
 Used by cache_idle_report.py to analyse whether cached prefixes actually
 idle beyond the ~5 min Anthropic TTL and resume cold (cache_creation > 0
 after a gap), which determines if a prompt-cache keepalive is worth wiring.
@@ -25,8 +26,11 @@ import os
 import time
 from pathlib import Path
 
+from lib.hal.home import hal_home
 
-_TELEMETRY_DIR = Path.home() / ".hal" / "state" / "hal"
+# Under HAL_HOME, not a hard-coded ~/.hal, so a test run's HAL_HOME keeps its
+# writes out of the live install (HAL#909).
+_TELEMETRY_DIR = hal_home() / "state" / "hal"
 _TELEMETRY_FILE = _TELEMETRY_DIR / "cache_calls.jsonl"
 
 

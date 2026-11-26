@@ -150,6 +150,12 @@ _PRICING: dict[str, tuple[float, float, float, float]] = {
     # neither page lists a prompt-length tier.
     "gemini-4-carbon":       (2.00,  10.00, 0.10,  2.00),
     "gemini-4-hydrogen":     (1.50,  7.50,  0.075, 1.50),
+    # Gemini 4 Neon -- ai.google.dev/gemini-api/docs/pricing, read 2026-11-26
+    # (paid/Standard tier): "$3.00" in, "$15.00" out (thinking included), "$0.15"
+    # cached, with no dated change and no prompt-length tier, so no schedule row.
+    # Not on the Free tier; implicit caching only, so cache_write carries the
+    # input rate like the rows above.
+    "gemini-4-neon":         (3.00,  15.00, 0.15,  3.00),
     # DeepSeek -- api-docs.deepseek.com/quick_start/pricing, re-read live
     # 2026-10-01 (the 2026-07-26 figures had been superseded). These are PEAK
     # rates, so an upper bound: off-peak is half, and peak is 01:00-04:00 and

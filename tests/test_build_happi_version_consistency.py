@@ -23,12 +23,14 @@ from pathlib import Path
 
 import pytest
 
-from tests._public_tree import folder_absent, reason
+from tests._public_tree import reason, withheld
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "build-happi.py"
-# Public HAL leaves scripts/ out, so on a public checkout every test here is
-# skipped with that reason (HAL#859); in the full repository they all run.
-pytestmark = pytest.mark.skipif(folder_absent("scripts"), reason=reason("scripts"))
+# Public HAL ships only install-starter.sh from scripts/, so on a public checkout
+# scripts/build-happi.py is absent and every test here is skipped with that reason (HAL#859);
+# in the full repository they all run. withheld(), not folder_absent(): scripts/
+# exists on a public checkout now, so a folder-level check would never skip.
+pytestmark = pytest.mark.skipif(withheld("scripts/build-happi.py"), reason=reason("scripts/build-happi.py"))
 
 
 def _load():

@@ -182,7 +182,7 @@ class BuildLoop:
             "total_cost_usd": sum(i.cost_usd for i in self._iterations),
             "last_updated": time.time(),
         }
-        with open(self._state_path, "w") as f:
+        with open(self._state_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
 

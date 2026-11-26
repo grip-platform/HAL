@@ -121,7 +121,7 @@ class AutoResearchLoop:
     def _load_direction(self) -> str:
         path = os.path.join(self._repo, "config", "rsi-direction.md")
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 return f.read()
         except FileNotFoundError:
             return "Improve HAL's routing reliability and cost efficiency."

@@ -16,13 +16,14 @@ import os
 import time
 from dataclasses import dataclass, field
 
+from lib.hal.home import hal_home
+
 
 def notifications_dir() -> str:
     """``$HAL_HOME/state/hal/notifications``, resolved when called, never at
     import: a value fixed at import keeps the HAL_HOME the process started
     with, so a test that set its own would still write into that one."""
-    home = os.environ.get("HAL_HOME") or os.path.expanduser("~/.hal")
-    return os.path.join(home, "state", "hal", "notifications")
+    return os.path.join(hal_home(), "state", "hal", "notifications")
 
 
 @dataclass(frozen=True)
@@ -96,7 +97,7 @@ class NotificationHub:
         os.makedirs(directory, exist_ok=True)
         path = os.path.join(directory, "history.json")
         data = [n.to_dict() for n in self._history]
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
     def clear(self) -> int:

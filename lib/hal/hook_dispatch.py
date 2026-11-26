@@ -318,7 +318,7 @@ def _load_classification() -> dict:
     if not os.path.exists(_CLASSIFICATION_PATH):
         return {"hard": {"hooks": {}}, "soft": {"hooks": {}}}
     try:
-        with open(_CLASSIFICATION_PATH, "r") as f:
+        with open(_CLASSIFICATION_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {"hard": {"hooks": {}}, "soft": {"hooks": {}}}

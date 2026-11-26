@@ -188,7 +188,7 @@ class PromptLibrary:
         if not os.path.exists(_CUSTOM_TEMPLATES_PATH):
             return
         try:
-            with open(_CUSTOM_TEMPLATES_PATH) as f:
+            with open(_CUSTOM_TEMPLATES_PATH, encoding="utf-8") as f:
                 data = json.load(f)
             for name, d in data.items():
                 self._custom[name] = PromptTemplate(
@@ -210,5 +210,5 @@ class PromptLibrary:
             }
             for name, t in self._custom.items()
         }
-        with open(_CUSTOM_TEMPLATES_PATH, "w") as f:
+        with open(_CUSTOM_TEMPLATES_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)

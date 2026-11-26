@@ -11,16 +11,22 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 # Path portability — import from this worktree's lib/hal/
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+from tests._platform import can_create_symlinks
 
 from lib.hal import file_sandbox  # noqa: E402
 from lib.hal.file_sandbox import (  # noqa: E402
@@ -83,6 +89,11 @@ class TestReadText(_TmpSandbox):
         ``/etc/passwd`` reads ``/etc/passwd``. Survives by asserting
         :class:`SandboxEscapeError` raised when a symlink points
         outside the sandbox."""
+        if not can_create_symlinks():
+            self.skipTest(
+                "this host cannot create symlinks without an "
+                "elevated/Developer-Mode privilege"
+            )
         outside = Path(tempfile.mkdtemp())
         try:
             outside_target = outside / "secret.txt"
@@ -129,6 +140,48 @@ class TestGrep(_TmpSandbox):
         self.assertEqual(hits[0].path, "x.txt")
         self.assertEqual(hits[0].line, 3)
 
+    def test_ripgrep_hit_through_escaping_symlink_is_dropped(self):
+        """Mutation: trust ripgrep's absolute hit path after parsing.
+        Survives by asserting a symlink-resolved hit outside the root is
+        dropped even when ripgrep reports the link as an in-root path."""
+        if not can_create_symlinks():
+            self.skipTest(
+                "this host cannot create symlinks without an "
+                "elevated/Developer-Mode privilege"
+            )
+        outside = Path(tempfile.mkdtemp())
+        try:
+            target = outside / "secret.txt"
+            target.write_text("needle\n", encoding="utf-8")
+            link = Path(self.root) / "escaped.txt"
+            link.symlink_to(target)
+            line = f"{link}:1:needle"
+            self.assertIsNone(file_sandbox._parse_rg_line(line, self.root))
+        finally:
+            shutil.rmtree(outside)
+
+    def test_stdlib_grep_hit_through_escaping_symlink_is_dropped(self):
+        """Mutation: open the os.walk result without resolving containment.
+        Survives by asserting the stdlib fallback returns no content through
+        a symlink whose target is outside the sandbox."""
+        if not can_create_symlinks():
+            self.skipTest(
+                "this host cannot create symlinks without an "
+                "elevated/Developer-Mode privilege"
+            )
+        outside = Path(tempfile.mkdtemp())
+        try:
+            target = outside / "secret.txt"
+            target.write_text("needle\n", encoding="utf-8")
+            link = Path(self.root) / "escaped.txt"
+            link.symlink_to(target)
+            hits = file_sandbox._grep_file_stdlib(
+                self.root, str(link), re.compile("needle"), 10
+            )
+            self.assertEqual(hits, [])
+        finally:
+            shutil.rmtree(outside)
+
 
 class TestGlob(_TmpSandbox):
 
@@ -168,6 +221,11 @@ class TestGlob(_TmpSandbox):
         ``Path.rglob`` would follow the symlink indefinitely; the
         sandbox MUST either skip the symlink-loop entry (per the
         ``_resolve_safe`` check) OR cap traversal at ``max_hits``."""
+        if not can_create_symlinks():
+            self.skipTest(
+                "this host cannot create symlinks without an "
+                "elevated/Developer-Mode privilege"
+            )
         loop_dir = Path(self.root) / "loopdir"
         loop_dir.mkdir()
         # inner -> loop_dir (cycle)
@@ -192,6 +250,36 @@ class TestGlob(_TmpSandbox):
 
 
 class TestValidateRoot(unittest.TestCase):
+
+    def test_sandbox_root_rejects_windows_system_roots(self):
+        """Mutation: omit Windows system roots from ``_REFUSED_ROOTS``.
+        Survives by asserting each live OS/program root is refused instead of
+        becoming a broad read sandbox."""
+        if os.name != "nt":
+            self.skipTest("Windows system roots exist only on Windows")
+        system_root = os.environ.get("SystemRoot") or r"C:\Windows"
+        roots = (
+            system_root,
+            os.path.join(system_root, "System32"),
+            os.environ.get("ProgramFiles") or r"C:\Program Files",
+            os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)",
+            os.environ.get("ProgramData") or r"C:\ProgramData",
+        )
+        for refused in roots:
+            with self.subTest(refused=refused):
+                if not os.path.isdir(refused):
+                    continue
+                with self.assertRaises(SandboxRootRefused):
+                    validate_root(refused)
+
+    def test_sandbox_root_allows_windows_tempdir(self):
+        """Mutation: refuse the whole Windows install drive.
+        Survives by asserting a real temporary directory remains a valid,
+        narrowly scoped sandbox root."""
+        if os.name != "nt":
+            self.skipTest("Windows temporary-directory control runs on Windows")
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(validate_root(directory), os.path.realpath(directory))
 
     def test_sandbox_root_rejects_etc_and_root(self):
         """T14 (W4 anchor) — Mutation: drop ``/etc`` / ``/`` from the
@@ -413,6 +501,29 @@ class TestGlobTimeout(_TmpSandbox):
             self._write(f"sub{i}/f.txt", "x")
         with self.assertRaises(SandboxTimeoutError):
             glob_pattern(self.root, "**/*.txt", timeout_s=0)
+
+
+class TestZeroTimeoutOnACoarseClock(_TmpSandbox):
+    """On Windows, time.monotonic moves in ~15.6 ms steps, so a whole search can
+    finish inside one step. A zero timeout must still fire when the clock reads
+    the same before and after."""
+
+    def _frozen_clock(self):
+        return SimpleNamespace(perf_counter=lambda: 100.0, monotonic=lambda: 100.0,
+                               strftime=time.strftime, gmtime=time.gmtime)
+
+    def test_zero_timeout_glob_fires_on_a_frozen_clock(self):
+        for i in range(3):
+            self._write(f"sub{i}/f.txt", "x")
+        with mock.patch.object(file_sandbox, "time", self._frozen_clock()):
+            with self.assertRaises(SandboxTimeoutError):
+                glob_pattern(self.root, "**/*.txt", timeout_s=0)
+
+    def test_zero_timeout_stdlib_grep_fires_on_a_frozen_clock(self):
+        self._write("a.txt", "line\n")
+        with mock.patch.object(file_sandbox, "time", self._frozen_clock()):
+            with self.assertRaises(SandboxTimeoutError):
+                file_sandbox._grep_via_stdlib(self.root, "line", max_hits=100, timeout_s=0)
 
 
 class TestAuditLog(_TmpSandbox):

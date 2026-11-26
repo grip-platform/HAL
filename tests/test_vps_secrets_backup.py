@@ -22,12 +22,14 @@ from pathlib import Path
 
 import pytest
 
-from tests._public_tree import folder_absent, reason
+from tests._public_tree import reason, withheld
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "vps-secrets-backup.sh"
-# Public HAL leaves scripts/ out, so on a public checkout every test here is
-# skipped with that reason (HAL#859); in the full repository they all run.
-pytestmark = pytest.mark.skipif(folder_absent("scripts"), reason=reason("scripts"))
+# Public HAL ships only install-starter.sh from scripts/, so on a public checkout
+# scripts/vps-secrets-backup.sh is absent and every test here is skipped with that reason (HAL#859);
+# in the full repository they all run. withheld(), not folder_absent(): scripts/
+# exists on a public checkout now, so a folder-level check would never skip.
+pytestmark = pytest.mark.skipif(withheld("scripts/vps-secrets-backup.sh"), reason=reason("scripts/vps-secrets-backup.sh"))
 
 SECRET_MARKER = "FAKE_SECRET_DO_NOT_LEAK_7f3a"
 

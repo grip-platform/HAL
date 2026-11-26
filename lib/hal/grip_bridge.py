@@ -63,7 +63,7 @@ def _read_identity() -> str:
     if not path.exists():
         return "GRIP is a recursive self-improvement engine at ~/.claude with mechanical safety gates."
     try:
-        text = path.read_text()[:500]
+        text = path.read_text(encoding="utf-8")[:500]
         # Find the "What GRIP Is" section
         for line in text.split("\n"):
             if "what grip is" in line.lower():
@@ -81,7 +81,7 @@ def _read_session_state() -> str:
     if not path.exists():
         return ""
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         lines = text.split("\n")
         gen_line = next((l for l in lines if "Gen " in l and "Branch:" in l), "")
         achievements = [l.strip("- ").strip() for l in lines if l.strip().startswith("- Gen ")][:3]
@@ -101,7 +101,7 @@ def _read_genome() -> str:
     if not path.exists():
         return ""
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         gen = data.get("generation", "?")
         genes = data.get("genes", {})
         gene_count = len(genes)
@@ -122,7 +122,7 @@ def _read_guild_stats() -> str:
         graphs = sorted(data_dir.glob("guild-graph-*.json"), key=lambda f: f.stat().st_size, reverse=True)
         if not graphs:
             return ""
-        data = json.loads(graphs[0].read_text())  # Largest graph = most content
+        data = json.loads(graphs[0].read_text(encoding="utf-8"))  # Largest graph = most content
         name = data.get("guildName", "unknown")
         channels = len(data.get("channels", []))
         members = len(data.get("members", []))

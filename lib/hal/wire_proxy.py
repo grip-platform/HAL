@@ -809,6 +809,53 @@ def _end_anthropic_send(proxy, ex, status=None):
         ex.send_key = None
 
 
+#: ``str(exc)`` is capped to this many characters before it is ever recorded
+#: -- a bound on a transport error's own length, never a substitute for the
+#: type-only rule below (truncating a parser's message would cap a body-bytes
+#: leak, not close it).
+_NO_ANSWER_REASON_MAX = 200
+
+
+def _record_no_answer(proxy, stage: str, exc: Optional[BaseException]) -> None:
+    """HAL#871: before this, a failed upstream left no trace of why -- only a
+    Python debug line naming the exception's type, nowhere a human or a later
+    session could read it. One ``wire.no_answer`` audit row, naming the stage
+    that failed (``request_head`` / ``request_body`` / ``response_head``) and,
+    when a transport exception is why, its errno and message. A clean close
+    with no bytes at all (no exception) still gets a row, naming the stage and
+    nothing else -- that case logged NOTHING before this. Never the request or
+    response body, and never allowed to cost the 503 it is about.
+
+    The message is recorded only for an ``OSError``-family transport failure:
+    its text describes the connection, not the HTTP payload on it (an
+    ``ssl.SSLError`` is one of this family and can name a certificate or
+    hostname, which is why this is "describes the connection" rather than
+    "the OS's words" -- still never the request or response body). A
+    ``ValueError`` or ``_WireProtocolError`` names a misframed stream -- a
+    malformed chunk size or Content-Length -- and its message can quote the
+    offending bytes verbatim, so only its type is ever recorded for those;
+    truncating that message would cap a body-bytes leak, not close it. The
+    whole row -- including this function's own bookkeeping, not only the
+    telemetry write -- is built under one guard, so nothing here, however it
+    fails, can cost the 503 the docstring promises it never will."""
+    try:
+        detail = {"event": "wire.no_answer", "stage": stage}
+        if exc is not None:
+            detail["exception"] = type(exc).__name__
+            if isinstance(exc, OSError):
+                detail["reason"] = str(exc)[:_NO_ANSWER_REASON_MAX]
+                errno = getattr(exc, "errno", None)
+                if errno is not None:
+                    detail["errno"] = errno
+        telemetry = getattr(proxy, "_telemetry", None)
+        if telemetry is None:
+            return
+        telemetry.record(detail)
+    except Exception:  # noqa: BLE001 -- observability never subtracts availability
+        _log.debug("a wire.no_answer row for stage=%s exception=%s could not be written",
+                   stage, type(exc).__name__ if exc is not None else "none")
+
+
 # --------------------------------------------------------------------------- #
 # Warm upstream connections.
 # --------------------------------------------------------------------------- #
@@ -1348,11 +1395,18 @@ class WireProxy:
                          ex: _Exchange) -> Optional[_Head]:
         """Send upstream and read its head; answer failed upstreams with 503."""
         sent = incomplete = False
+        # The first stage a failure can land in: the socket is already
+        # connected (a warm or freshly dialled _Upstream) by the time this
+        # method runs, so there is no earlier "connect" stage for an
+        # exception here to be attributed to.
+        stage = "request_head"
+        failure: Optional[BaseException] = None
         upload = _mark_session_upload(self, ex, request)
         try:
             sent = True
             conn.sock.sendall(request.raw)
             sink = _RequestTee(conn.sock, ex.wire_body) if ex.wire_body else conn.sock
+            stage = "request_body"
             if not _relay(client, sink, _request_framing(request), ex.body):
                 # An incomplete client body cannot have been accepted as this turn.
                 incomplete = True
@@ -1361,10 +1415,12 @@ class WireProxy:
                                 ex.body.value() if ex.body else b"")
             # Before this point the complete body was not sent, so no turn was accepted.
             _begin_anthropic_send(self, ex)
+            stage = "response_head"
             response = self._answer(client, conn, ex)
             if ex.answer_head_seen:
                 _end_anthropic_send(self, ex)
         except (OSError, ValueError, _WireProtocolError) as exc:
+            failure = exc
             _log.debug("the upstream failed before answering: %s", type(exc).__name__)
             response = None
         finally:
@@ -1377,6 +1433,7 @@ class WireProxy:
             if upload:
                 self._w4_attempts.end(upload)
         if response is None:
+            _record_no_answer(self, stage, failure)
             _send_quietly(client.sock, _NO_ANSWER)
         return response
 

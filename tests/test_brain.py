@@ -7,6 +7,8 @@ import hashlib
 import http.client
 import itertools
 import json
+import os
+import shutil
 import socket
 import subprocess
 import threading
@@ -285,6 +287,11 @@ def openssl(*args):
 
 @pytest.fixture
 def tsa(tmp_path):
+    if not shutil.which("openssl"):
+        pytest.skip("openssl not on PATH")
+    version = subprocess.run(["openssl", "version"], capture_output=True, timeout=15).stdout
+    if version.startswith(b"LibreSSL"):
+        pytest.skip("the local TSA needs OpenSSL, and this openssl is LibreSSL (macOS /usr/bin)")
     ca, key = tmp_path / "tsa.pem", tmp_path / "tsa-private.pem"
     openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", key,
             "-out", ca, "-days", "1", "-subj", "/CN=Fake Test TSA",
@@ -296,9 +303,9 @@ def tsa(tmp_path):
     config.write_text(f"""[tsa]
 default_tsa = test
 [test]
-serial = {serial}
-signer_cert = {ca}
-signer_key = {key}
+serial = {serial.as_posix()}
+signer_cert = {ca.as_posix()}
+signer_key = {key.as_posix()}
 signer_digest = sha256
 default_policy = 1.2.3.4.1
 digests = sha256
@@ -317,6 +324,45 @@ ess_cert_id_alg = sha256
         return {"status": "anchored", "token_b64": base64.b64encode(token.read_bytes()).decode()}
 
     return ca, issue
+
+
+def test_local_tsa_config_has_no_backslashes(tsa, tmp_path):
+    # OpenSSL reads a backslash in a config value as an escape, so a Windows
+    # path such as C:\Users\remote would lose its \r and the TSA would fail.
+    assert "\\" not in (tmp_path / "tsa.conf").read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows enforces this itself")
+def test_anchor_fsyncs_the_token_through_a_writable_handle(store, signing, tsa, tmp_path, monkeypatch):
+    # Windows refuses fsync on a handle opened read-only (EBADF) and POSIX allows
+    # it, so fail such a call here the way Windows would.
+    import errno
+    import fcntl
+
+    real_fsync = os.fsync
+    fsynced = set()
+
+    def windows_fsync(fd):
+        if fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY:
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        info = os.fstat(fd)
+        fsynced.add((info.st_dev, info.st_ino))
+        real_fsync(fd)
+
+    monkeypatch.setattr(brain_anchor.os, "fsync", windows_fsync)
+    store.put_head(head(signing))
+    ca, issue = tsa
+    monkeypatch.setattr(infinite_thread, "grip_anchor", issue)
+    result = brain_anchor.anchor_once(store, tmp_path / "anchors", ca)
+    assert result["status"] == "anchored"
+    token = Path(result["path"]) / "timestamp.der"
+    # The published token itself was fsynced (the rename keeps its inode).
+    info = token.stat()
+    assert (info.st_dev, info.st_ino) in fsynced
+    # The stand-in really refuses a read-only handle, as Windows does.
+    with token.open("rb") as handle, pytest.raises(OSError) as refused:
+        windows_fsync(handle.fileno())
+    assert refused.value.errno == errno.EBADF
 
 
 def test_anchor_stores_real_verifiable_timestamp(store, signing, tsa, tmp_path, monkeypatch):

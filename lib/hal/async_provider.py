@@ -41,15 +41,15 @@ class AsyncAdapter:
     async def chat(self, model: str, message: str, max_tokens: int = 16384) -> AsyncChatResult:
         """Send a chat message asynchronously."""
         loop = asyncio.get_event_loop()
-        start = time.monotonic()
+        start = time.perf_counter()
         try:
             response = await loop.run_in_executor(
                 None, lambda: self._registry.chat(model, message, max_tokens=max_tokens),
             )
-            latency = (time.monotonic() - start) * 1000
+            latency = (time.perf_counter() - start) * 1000
             return AsyncChatResult(model=model, response=response, success=True, latency_ms=latency)
         except Exception as e:
-            latency = (time.monotonic() - start) * 1000
+            latency = (time.perf_counter() - start) * 1000
             return AsyncChatResult(model=model, response=None, success=False, error=str(e)[:200], latency_ms=latency)
 
     async def parallel_chat(self, queries: list[tuple[str, str]], max_tokens: int = 16384) -> list[AsyncChatResult]:

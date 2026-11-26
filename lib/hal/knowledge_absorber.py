@@ -210,7 +210,7 @@ def _whisper_cli(source: str) -> str:
         if result.returncode == 0:
             txt_path = os.path.join("/tmp", os.path.splitext(os.path.basename(source))[0] + ".txt")
             if os.path.isfile(txt_path):
-                with open(txt_path, "r") as f:
+                with open(txt_path, "r", encoding="utf-8") as f:
                     return f.read()[:8000]
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
@@ -237,7 +237,7 @@ def _extract_file(source: str) -> tuple[str, str]:
     if source.endswith(".pdf"):
         return _extract_paper(source)
     try:
-        with open(source, "r", errors="replace") as f:
+        with open(source, "r", errors="replace", encoding="utf-8") as f:
             return os.path.basename(source), f.read(10000)
     except OSError:
         return source, ""
@@ -337,5 +337,5 @@ def _save_report(report: AbsorptionReport) -> None:
     os.makedirs(_ABSORPTIONS_DIR, exist_ok=True)
     safe = re.sub(r"[^a-zA-Z0-9-]", "-", report.source)[:50]
     path = os.path.join(_ABSORPTIONS_DIR, f"{safe}-{int(time.time())}.json")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(report.to_dict(), f, indent=2)

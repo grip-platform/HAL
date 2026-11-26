@@ -51,14 +51,14 @@ class ContextSnapshot:
             "turn_count": self.turn_count,
             "history": [{"role": m.role, "content": m.content} for m in self.history],
         }
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return path
 
     @staticmethod
     def load(path: str) -> "ContextSnapshot":
         """Load snapshot from JSON file."""
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return ContextSnapshot(
             session_id=data.get("session_id", ""),

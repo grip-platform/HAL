@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from lib.hal.models_command import (  # noqa: E402
     AnnotatedEntry,
     ModelEntry,
+    _default_catalogue_path,
     annotate_availability,
     filter_entries,
     handle_models_command,
@@ -98,6 +99,21 @@ def _write_fixture() -> str:
     with os.fdopen(fd, "w") as f:
         f.write(_FIXTURE_YAML)
     return path
+
+
+def test_default_catalogue_path_prefers_hal_root(monkeypatch, tmp_path):
+    root = tmp_path / "root"
+    monkeypatch.setenv("HAL_ROOT", str(root))
+    monkeypatch.setenv("HAL_HOME", str(tmp_path / "home"))
+    assert _default_catalogue_path() == str(root / "config" / "model_catalog.yaml")
+
+
+def test_default_catalogue_path_follows_hal_home_at_call_time(monkeypatch, tmp_path):
+    monkeypatch.delenv("HAL_ROOT", raising=False)
+    for name in ("first", "second"):
+        home = tmp_path / name
+        monkeypatch.setenv("HAL_HOME", str(home))
+        assert _default_catalogue_path() == str(home / "config" / "model_catalog.yaml")
 
 
 # ────────────────────────────────────────────────────────────────────

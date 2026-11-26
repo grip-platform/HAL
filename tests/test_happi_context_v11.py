@@ -23,6 +23,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests._bash import find_bash
 
 def _resolve_polyglot() -> Path:
     """Locate the happi.md under test, preferring THIS checkout.
@@ -49,11 +50,18 @@ def _resolve_polyglot() -> Path:
 
 
 POLYGLOT = _resolve_polyglot()
+_BASH = find_bash()
 
-pytestmark = pytest.mark.skipif(
-    not POLYGLOT.exists(),
-    reason=f"happi.md not found (looked at {POLYGLOT}); set $HAPPI_MD to override",
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not POLYGLOT.exists(),
+        reason=f"happi.md not found (looked at {POLYGLOT}); set $HAPPI_MD to override",
+    ),
+    pytest.mark.skipif(
+        _BASH is None,
+        reason="no usable bash found on this machine (install Git Bash on Windows)",
+    ),
+]
 
 _EXCLUDE = ("id", "ts", "audit")
 
@@ -63,7 +71,7 @@ _EXCLUDE = ("id", "ts", "audit")
 def _run(env: dict) -> list[dict]:
     """Dispatch an envelope through the canonical polyglot runtime."""
     proc = subprocess.run(
-        ["bash", str(POLYGLOT), "run"],
+        [_BASH, str(POLYGLOT), "run"],
         input=json.dumps(env), capture_output=True, text=True, timeout=20,
     )
     return [json.loads(ln) for ln in proc.stdout.splitlines() if ln.strip()]

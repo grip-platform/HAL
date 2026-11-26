@@ -501,9 +501,9 @@ def _content_differs(grip_path: str, hal_path: str, component_type: str) -> int:
         hal_file = hal_path
 
     try:
-        with open(grip_file, "r", errors="replace") as f:
+        with open(grip_file, "r", errors="replace", encoding="utf-8") as f:
             grip_content = f.read()
-        with open(hal_file, "r", errors="replace") as f:
+        with open(hal_file, "r", errors="replace", encoding="utf-8") as f:
             hal_content = f.read()
         if grip_content == hal_content:
             return 0
@@ -526,10 +526,10 @@ def _score_portability(diff: ComponentDiff) -> None:
         # Read SKILL.md for skills
         skill_file = os.path.join(path, "SKILL.md")
         if os.path.exists(skill_file):
-            with open(skill_file, "r", errors="replace") as f:
+            with open(skill_file, "r", errors="replace", encoding="utf-8") as f:
                 content = f.read()
     else:
-        with open(path, "r", errors="replace") as f:
+        with open(path, "r", errors="replace", encoding="utf-8") as f:
             content = f.read()
 
     markers = _CC_MARKERS.findall(content)
@@ -542,7 +542,7 @@ def _save_report(report: GRIPHarnessReport, reports_dir: str = _REPORTS_DIR) -> 
     """Persist scan report under ``reports_dir`` (defaults to ``~/.hal`` tree)."""
     os.makedirs(reports_dir, exist_ok=True)
     path = os.path.join(reports_dir, "latest.json")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(report.to_dict(), f, indent=2)
 
 
@@ -551,7 +551,7 @@ def _save_absorb_log(actions: list[str], reports_dir: str = _REPORTS_DIR) -> Non
     os.makedirs(reports_dir, exist_ok=True)
     path = os.path.join(reports_dir, "absorb.log")
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-    with open(path, "a") as f:
+    with open(path, "a", encoding="utf-8") as f:
         f.write(f"\n--- {timestamp} ---\n")
         for action in actions:
             f.write(f"  {action}\n")

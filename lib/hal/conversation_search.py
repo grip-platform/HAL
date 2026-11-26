@@ -71,7 +71,7 @@ def _list_replays() -> list[str]:
 def _search_replay(path: str, query_terms: set[str]) -> list[SearchResult]:
     """Search a single replay file for matching events."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return []

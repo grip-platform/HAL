@@ -37,6 +37,7 @@ from lib.hal.happi import (
     validate_decision,
 )
 from lib.hal.happi.decision import is_predicate_shaped, reject_surface_fields
+from tests._bash import find_bash
 
 
 # A canonical valid delegated decision (full anatomy, externally-checkable falsifier)
@@ -206,6 +207,11 @@ def _accepts(fn, raw, exc):
 # ---------- polyglot runtime opt-in (subprocess) -------------------------
 
 _POLYGLOT = Path(__file__).resolve().parent.parent / "happi.md"
+_BASH = find_bash()
+pytestmark = pytest.mark.skipif(
+    _BASH is None,
+    reason="no usable bash found on this machine (install Git Bash on Windows)",
+)
 
 
 def _run_context_append(body, flags=None):
@@ -213,7 +219,7 @@ def _run_context_append(body, flags=None):
            "args": [json.dumps(body)]}
     if flags:
         env["flags"] = flags
-    proc = subprocess.run(["bash", str(_POLYGLOT), "run"],
+    proc = subprocess.run([_BASH, str(_POLYGLOT), "run"],
                           input=json.dumps(env), capture_output=True,
                           text=True, timeout=20)
     return [json.loads(ln) for ln in proc.stdout.splitlines() if ln.strip()]

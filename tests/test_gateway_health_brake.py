@@ -64,7 +64,7 @@ def test_health_reports_engaged_brake_with_detail(health_server):
     base, tmp = health_server
     marker = tmp / "state" / "session" / "infinite-stop.json"
     marker.parent.mkdir(parents=True)
-    marker.write_text(json.dumps({"by": "test", "reason": "drill"}))
+    marker.write_text(json.dumps({"by": "test", "reason": "drill"}), encoding="utf-8")
     status, doc = _get_json(base + "/health")
     assert status == 200
     assert doc["brake"]["engaged"] is True
@@ -87,7 +87,7 @@ def test_brake_absent_marker_released(tmp_path):
 def test_brake_present_marker_engaged(tmp_path):
     m = tmp_path / "state" / "session" / "infinite-stop.json"
     m.parent.mkdir(parents=True)
-    m.write_text("{}")
+    m.write_text("{}", encoding="utf-8")
     assert gateway_brake.brake_engaged({"CLAUDE_DIR": str(tmp_path)}) is True
 
 
@@ -104,7 +104,7 @@ def test_brake_corrupt_marker_still_engages_fail_closed(tmp_path):
 
 def test_brake_env_override_wins(tmp_path):
     m = tmp_path / "elsewhere.json"
-    m.write_text("{}")
+    m.write_text("{}", encoding="utf-8")
     env = {"HAL_INFINITE_BRAKE_MARKER": str(m),
            "CLAUDE_DIR": str(tmp_path / "unused")}
     assert gateway_brake.marker_path(env) == m
@@ -117,7 +117,7 @@ def test_false_trip_outbound_stop_does_not_engage_im_brake(tmp_path):
     # must never trip the other.
     other = tmp_path / "state" / "session" / "outbound-stop.json"
     other.parent.mkdir(parents=True)
-    other.write_text(json.dumps({"by": "grip-stop"}))
+    other.write_text(json.dumps({"by": "grip-stop"}), encoding="utf-8")
     assert gateway_brake.brake_engaged({"CLAUDE_DIR": str(tmp_path)}) is False
 
 
@@ -126,11 +126,11 @@ def test_false_trip_the_wire_egress_brake_and_the_im_brake_are_distinct(tmp_path
     env = {"CLAUDE_DIR": str(tmp_path)}
     egress = EGRESS_BRAKE.path(env)
     egress.parent.mkdir(parents=True)
-    egress.write_text("{}")
+    egress.write_text("{}", encoding="utf-8")
     assert EGRESS_BRAKE.engaged(env) is True
     assert gateway_brake.brake_engaged(env) is False
     egress.unlink()
-    gateway_brake.marker_path(env).write_text("{}")
+    gateway_brake.marker_path(env).write_text("{}", encoding="utf-8")
     assert EGRESS_BRAKE.engaged(env) is False
 
 
@@ -140,18 +140,41 @@ def test_presence_is_decided_without_path_exists(tmp_path, monkeypatch):
     must still engage. Catches a return to Path.exists() on any Python, where the
     permission test below catches it only on 3.14."""
     marker = tmp_path / "infinite-stop.json"
-    marker.write_text("{}")
+    marker.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(Path, "exists", lambda self, *args, **kwargs: False)
     env = {"HAL_INFINITE_BRAKE_MARKER": str(marker)}
     assert gateway_brake.brake_engaged(env) is True
     assert gateway_brake.brake_state(env)["detail"] == {}
 
 
+def test_brake_unstattable_marker_still_engages_fail_closed(tmp_path, monkeypatch):
+    # Windows chmod cannot make a directory unstattable, so induce the exact
+    # cross-platform contract under test: os.stat raises a non-absence error.
+    marker = tmp_path / "locked" / "infinite-stop.json"
+    env = {"HAL_INFINITE_BRAKE_MARKER": str(marker)}
+    real_stat = os.stat
+
+    def _denied(path, *args, **kwargs):
+        if os.fspath(path) == os.fspath(marker):
+            raise PermissionError(13, "Permission denied")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", _denied)
+    assert gateway_brake.brake_engaged(env) is True
+    assert gateway_brake.brake_state(env)["engaged"] is True
+
+
+@pytest.mark.skipif(os.name == "nt",
+                    reason="Windows chmod cannot make a directory "
+                           "unstattable; covered by the mocked os.stat "
+                           "version above")
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
-                    reason="root can inspect any path, so nothing is uncheckable")
-def test_brake_unstattable_marker_still_engages_fail_closed(tmp_path):
-    # Python 3.14's Path.exists() answers False for a path it may not inspect
-    # (3.12 and 3.13 raise), which released this brake on the live 3.14 gateway.
+                    reason="root can inspect any path, so nothing is "
+                           "uncheckable")
+def test_brake_real_unstattable_marker_still_engages_fail_closed_posix(tmp_path):
+    """Mutation: use ``Path.exists`` and treat an inspection error as absent.
+    Survives through a real POSIX permission failure, complementing the
+    cross-platform mocked syscall test above."""
     locked = tmp_path / "locked"
     locked.mkdir()
     env = {"HAL_INFINITE_BRAKE_MARKER": str(locked / "infinite-stop.json")}

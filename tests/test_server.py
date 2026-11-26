@@ -67,7 +67,7 @@ class TestPublicPage(unittest.TestCase):
                 self.assertIn("text/html", headers)
                 if compiled:
                     self.assertEqual(body, "<html>Compiled operator UI</html>")
-                    self.assertTrue(opened.call_args.args[0].endswith(
+                    self.assertTrue(opened.call_args.args[0].replace(os.sep, "/").endswith(
                         "apps/grip-web/dist/index.html"
                     ))
                     self.assertEqual(opened.call_args.args[1], "rb")

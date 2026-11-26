@@ -50,7 +50,7 @@ class SessionManager:
             "elapsed_s": self.elapsed_seconds,
             **state,
         }
-        with open(_SESSION_FILE, "w") as f:
+        with open(_SESSION_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
 
     def load_state(self) -> Optional[dict]:
@@ -58,7 +58,7 @@ class SessionManager:
         if not os.path.exists(_SESSION_FILE):
             return None
         try:
-            with open(_SESSION_FILE, "r") as f:
+            with open(_SESSION_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return None

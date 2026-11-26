@@ -105,10 +105,21 @@ def test_init_creates_a_ca_limited_to_one_host(home):
     assert timedelta(days=365) <= life <= timedelta(days=366)
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows ACLs, not POSIX mode bits, control file access")
 def test_the_key_file_is_0600_inside_a_0700_directory(home):
     wire_ca.load_or_create()
     assert stat.S_IMODE(os.stat(wire_ca.ca_key_path()).st_mode) == 0o600
     assert stat.S_IMODE(os.stat(wire_ca.ca_dir()).st_mode) == 0o700
+
+
+def test_the_atomic_write_works_where_os_has_no_fchmod(tmp_path, monkeypatch):
+    # Windows has os.fchmod only from Python 3.13; the public check runs 3.12.
+    monkeypatch.delattr(wire_ca.os, "fchmod", raising=False)
+    target = tmp_path / "key.pem"
+    wire_ca._atomic_write(target, b"secret", 0o600)
+    assert target.read_bytes() == b"secret"
+    assert not list(tmp_path.glob(".key.pem.*.tmp"))
 
 
 def test_load_or_create_never_replaces_an_existing_ca(home):
@@ -184,6 +195,26 @@ def test_a_leaf_verifies_with_the_ca_as_the_only_trust_anchor(home):
     assert ("DNS", CONSTRAINED_HOST) in result["peer"]["subjectAltName"]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="real Windows named pipes exist only on Windows")
+def test_on_windows_a_real_handshake_loads_its_leaf_through_real_named_pipes(home, monkeypatch):
+    # No stand-in: the real Win32 pipes and a real ssl.SSLContext, observed only.
+    calls = []
+    real_loader = wire_ca._load_chain_from_windows_pipes
+
+    def observed(context, cert_pem, key_pem):
+        calls.append(type(context))
+        return real_loader(context, cert_pem, key_pem)
+
+    monkeypatch.setattr(wire_ca, "_load_chain_from_windows_pipes", observed)
+    ca = wire_ca.load_or_create()
+    leaf = ca.mint_leaf(CONSTRAINED_HOST)
+    result = _handshake(wire_ca.server_context(leaf), _client(_ca_pem(ca)),
+                        CONSTRAINED_HOST)
+    assert calls == [ssl.SSLContext]
+    assert result["data"] == b"ok"
+    assert ("DNS", CONSTRAINED_HOST) in result["peer"]["subjectAltName"]
+
+
 def test_the_same_leaf_fails_without_the_ca(home):
     leaf = wire_ca.load_or_create().mint_leaf(CONSTRAINED_HOST)
     with pytest.raises(ssl.SSLCertVerificationError):
@@ -238,6 +269,308 @@ def test_minting_writes_nothing_to_disk(home):
     before = sorted(p.name for p in home.rglob("*"))
     wire_ca.server_context(ca.mint_leaf())
     assert sorted(p.name for p in home.rglob("*")) == before
+
+
+class _StandInWinAPI:
+    def __init__(self, written=None):
+        self.create_args = None
+        self.closed = []
+        self.written = written
+        self.parts = []
+        self.created = 0
+
+    def CreateNamedPipe(self, *args):
+        self.create_args = args
+        self.created += 1
+        return self.created
+
+    def ConnectNamedPipe(self, handle, overlapped):
+        return None
+
+    def WriteFile(self, handle, data, overlapped):
+        count = len(data) if self.written is None else min(self.written, len(data))
+        self.parts.append(data[:count])
+        return count, 0
+
+    def CloseHandle(self, handle):
+        self.closed.append(handle)
+
+
+@pytest.fixture
+def native_pipe_api(monkeypatch):
+    """Exercise the production ctypes adapter with recording DLL entry points."""
+    import ctypes as c
+    from ctypes import wintypes as w
+    from types import SimpleNamespace
+
+    records = SimpleNamespace(sddl=None, security=None, freed=[], created=0,
+                              protected=[], fail_descriptor=False,
+                              null_descriptor=False, fail_create=False)
+    descriptor = c.create_string_buffer(b"restricted descriptor")
+
+    def convert(sddl, revision, output, size):
+        records.sddl = sddl
+        assert revision == 1
+        if records.fail_descriptor:
+            raise OSError("SDDL conversion denied")
+        if records.null_descriptor:
+            return 1
+        c.cast(output, c.POINTER(c.c_void_p))[0] = c.addressof(descriptor)
+        return 1
+
+    def create(*args):
+        records.created += 1
+        assert args[-1], "default security attributes must never reach CreateNamedPipeW"
+        attributes = c.cast(args[-1], c.POINTER(api.SecurityAttributes)).contents
+        assert attributes.nLength == c.sizeof(api.SecurityAttributes)
+        assert attributes.lpSecurityDescriptor == c.addressof(descriptor)
+        assert not attributes.bInheritHandle
+        records.security = records.sddl
+        if records.fail_create:
+            raise OSError("pipe creation failed")
+        return 42
+
+    def set_file_security(path, information, security):
+        records.protected.append((path, information, records.sddl))
+        return 1
+
+    class Function:
+        def __init__(self, fn):
+            self.fn = fn
+
+        def __call__(self, *args):
+            return self.fn(*args)
+
+    class DLL:
+        def __getattr__(self, name):
+            return Function({
+                "ConvertStringSecurityDescriptorToSecurityDescriptorW": convert,
+                "CreateNamedPipeW": create,
+                "SetFileSecurityW": set_file_security,
+                "LocalFree": lambda ptr: records.freed.append(ptr.value),
+            }.get(name, lambda *args: 1))
+
+    monkeypatch.setattr(c, "WinDLL", lambda *a, **kw: DLL(), raising=False)
+    api = wire_ca._WindowsPipeAPI()
+    monkeypatch.setattr(api, "_read_user_sid",
+                        lambda: "S-1-5-21-123-456-789-1001")
+    return api, records
+
+
+def test_the_windows_pipe_receives_only_user_and_system_security(native_pipe_api):
+    api, records = native_pipe_api
+    server = wire_ca._WindowsPEMPipe(api, b"pem")
+    try:
+        sid = "S-1-5-21-123-456-789-1001"
+        assert records.security == f"O:{sid}D:P(A;;FA;;;SY)(A;;FA;;;{sid})"
+        assert records.created == 1
+        assert len(records.freed) == 1
+    finally:
+        server.finish()
+
+
+def test_windows_descriptor_failure_never_creates_a_default_pipe(native_pipe_api):
+    api, records = native_pipe_api
+    records.fail_descriptor = True
+    with pytest.raises(WireCAError, match="cannot restrict.*SDDL conversion denied"):
+        wire_ca._WindowsPEMPipe(api, b"pem")
+    assert records.created == 0
+
+
+def test_windows_null_descriptor_fails_closed(native_pipe_api):
+    api, records = native_pipe_api
+    records.null_descriptor = True
+    with pytest.raises(WireCAError, match="NULL descriptor"):
+        wire_ca._WindowsPEMPipe(api, b"pem")
+    assert records.created == 0
+
+
+def test_windows_descriptor_is_freed_if_creation_fails(native_pipe_api):
+    api, records = native_pipe_api
+    records.fail_create = True
+    with pytest.raises(OSError, match="pipe creation failed"):
+        wire_ca._WindowsPEMPipe(api, b"pem")
+    assert len(records.freed) == 1
+
+
+def test_windows_user_sid_is_cached_on_the_api(native_pipe_api, monkeypatch):
+    api, _ = native_pipe_api
+    reads = []
+    monkeypatch.setattr(api, "_read_user_sid", lambda: reads.append(1) or "S-1-5-21-1")
+    assert api._user_sid() == api._user_sid() == "S-1-5-21-1"
+    assert reads == [1]
+
+
+def test_windows_folder_and_key_receive_owner_only_security(home, monkeypatch):
+    events = []
+    sid = "S-1-5-21-123-456-789-1001"
+    sddl = f"O:{sid}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;{sid})"
+
+    class API:
+        def ProtectPath(self, path):
+            events.append(("protect", Path(path), sddl))
+
+    real_atomic_write = wire_ca._atomic_write
+
+    def record_write(path, data, mode):
+        events.append(("write", Path(path)))
+        real_atomic_write(path, data, mode)
+
+    monkeypatch.setattr(wire_ca, "_is_windows", lambda: True)
+    monkeypatch.setattr(wire_ca, "_WindowsPipeAPI", API)
+    monkeypatch.setattr(wire_ca, "_atomic_write", record_write)
+    wire_ca._FileStore(wire_ca.ca_key_path()).put(b"private")
+    assert events == [
+        ("protect", wire_ca.ca_dir(), sddl),
+        ("write", wire_ca.ca_key_path()),
+        ("protect", wire_ca.ca_key_path(), sddl),
+    ]
+    assert wire_ca.ca_key_path().read_bytes() == b"private"
+
+
+def test_windows_folder_security_failure_refuses_key_write(home, monkeypatch):
+    class API:
+        def ProtectPath(self, path):
+            raise OSError("ACL denied")
+
+    monkeypatch.setattr(wire_ca, "_is_windows", lambda: True)
+    monkeypatch.setattr(wire_ca, "_WindowsPipeAPI", API)
+    with pytest.raises(WireCAError, match="cannot restrict.*ACL denied"):
+        wire_ca._FileStore(wire_ca.ca_key_path()).put(b"private")
+    assert not wire_ca.ca_key_path().exists()
+
+
+def test_windows_key_security_failure_removes_written_key(home, monkeypatch):
+    calls = []
+
+    def protect(path, purpose):
+        calls.append(purpose)
+        if purpose == "wire CA private key":
+            raise WireCAError("cannot restrict Windows key security: ACL denied")
+
+    monkeypatch.setattr(wire_ca, "_is_windows", lambda: True)
+    monkeypatch.setattr(wire_ca, "_protect_windows_path", protect)
+    with pytest.raises(WireCAError, match="ACL denied"):
+        wire_ca._FileStore(wire_ca.ca_key_path()).put(b"private")
+    assert calls == ["wire CA folder", "wire CA private key"]
+    assert not wire_ca.ca_key_path().exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires real Windows ACL APIs")
+def test_windows_key_dacl_contains_only_system_and_current_user(home):
+    import ctypes as c
+    from ctypes import wintypes as w
+
+    wire_ca.load_or_create()
+    api = wire_ca._WindowsPipeAPI()
+    advapi = c.WinDLL("advapi32", use_last_error=True)
+    kernel = c.WinDLL("kernel32", use_last_error=True)
+    get_security = advapi.GetFileSecurityW
+    get_security.argtypes = [w.LPCWSTR, w.DWORD, c.c_void_p, w.DWORD,
+                             c.POINTER(w.DWORD)]
+    get_security.restype = w.BOOL
+    to_string = advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW
+    to_string.argtypes = [c.c_void_p, w.DWORD, w.DWORD, c.POINTER(w.LPWSTR),
+                          c.POINTER(w.DWORD)]
+    to_string.restype = w.BOOL
+    needed = w.DWORD()
+    information = (wire_ca._OWNER_SECURITY_INFORMATION
+                   | wire_ca._DACL_SECURITY_INFORMATION)
+    get_security(str(wire_ca.ca_key_path()), information, None, 0, c.byref(needed))
+    descriptor = c.create_string_buffer(needed.value)
+    api._check(get_security(str(wire_ca.ca_key_path()), information, descriptor,
+                            needed, c.byref(needed)))
+    text = w.LPWSTR()
+    api._check(to_string(descriptor, 1, information, c.byref(text), None))
+    try:
+        sddl = text.value
+    finally:
+        kernel.LocalFree(c.cast(text, c.c_void_p))
+    sid = api._user_sid()
+    assert sddl.startswith(f"O:{sid}D:P")
+    assert sddl.count("(A;") == 2
+    assert ";;;SY)" in sddl and f";;;{sid})" in sddl
+
+
+def test_a_short_windows_pipe_write_sends_the_remaining_bytes():
+    api = _StandInWinAPI(written=2)
+    server = wire_ca._WindowsPEMPipe(api, b"pem")
+    server.start()
+    server.finish()
+    assert api.parts == [b"pe", b"m"]
+    assert api.closed == [1]
+
+
+def test_a_stalled_windows_pipe_write_times_out(monkeypatch):
+    api = _StandInWinAPI(written=0)
+    monkeypatch.setattr(wire_ca, "_PIPE_TIMEOUT_S", 0.02)
+    server = wire_ca._WindowsPEMPipe(api, b"pem")
+    server.start()
+    with pytest.raises(WireCAError, match="timed out while writing"):
+        server.finish()
+    assert api.closed == [1]
+
+
+@pytest.mark.parametrize("oversized", [False, True])
+def test_first_windows_pipe_is_closed_when_second_creation_fails(monkeypatch, oversized):
+    api = _StandInWinAPI()
+    original = api.CreateNamedPipe
+
+    def create(*args):
+        if api.created:
+            raise OSError("second pipe failed")
+        return original(*args)
+
+    api.CreateNamedPipe = create
+    monkeypatch.setattr(wire_ca, "_WindowsPipeAPI", lambda: api)
+    with pytest.raises((WireCAError, OSError), match="larger|second pipe failed"):
+        wire_ca._load_chain_from_windows_pipes(
+            object(), b"cert", b"x" * (wire_ca._PIPE_LIMIT + 1) if oversized else b"key")
+    assert api.closed == [1]
+
+
+def test_non_windows_without_dev_fd_fails_clearly(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(wire_ca, "os", SimpleNamespace(
+        name="posix", path=SimpleNamespace(isdir=lambda path: False)))
+    with pytest.raises(WireCAError, match="needs /dev/fd on POSIX"):
+        wire_ca._load_chain_in_memory(object(), b"cert", b"key")
+
+
+def test_windows_dispatch_does_not_depend_on_dev_fd(monkeypatch):
+    from types import SimpleNamespace
+    calls = []
+    monkeypatch.setattr(wire_ca, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(wire_ca, "_load_chain_from_windows_pipes",
+                        lambda *args: calls.append(args))
+    context = object()
+    wire_ca._load_chain_in_memory(context, b"cert", b"key")
+    assert calls == [(context, b"cert", b"key")]
+
+
+def test_every_windows_pipe_is_finished_after_an_earlier_finish_error(monkeypatch):
+    finished = []
+
+    class StandInServer:
+        def __init__(self, winapi, data):
+            self.path = data.decode()
+
+        def start(self):
+            pass
+
+        def finish(self):
+            finished.append(self.path)
+            raise WireCAError(f"finish {self.path}")
+
+    class StandInContext:
+        def load_cert_chain(self, cert, key):
+            pass
+
+    monkeypatch.setattr(wire_ca, "_WindowsPipeAPI", lambda: object())
+    monkeypatch.setattr(wire_ca, "_WindowsPEMPipe", StandInServer)
+    with pytest.raises(WireCAError, match="finish cert"):
+        wire_ca._load_chain_from_windows_pipes(StandInContext(), b"cert", b"key")
+    assert finished == ["cert", "key"]
 
 
 # --------------------------------------------------------------------------- #
@@ -367,7 +700,14 @@ def _calls(log: Path) -> list:
     return [json.loads(line) for line in log.read_text().splitlines()]
 
 
-@pytest.mark.parametrize("store_class", [wire_ca._KeychainStore, wire_ca._SecretToolStore])
+@pytest.mark.parametrize("store_class", [
+    pytest.param(wire_ca._KeychainStore,
+                 marks=pytest.mark.skipif(os.name == "nt",
+                                          reason="the stand-in executable requires POSIX")),
+    pytest.param(wire_ca._SecretToolStore,
+                 marks=pytest.mark.skipif(os.name == "nt",
+                                          reason="the stand-in executable requires POSIX")),
+])
 def test_the_secret_goes_to_the_store_on_stdin_never_on_the_command_line(
         stand_in, store_class):
     secret = wire_ca._key_pem(ec.generate_private_key(ec.SECP256R1()))
@@ -388,10 +728,13 @@ def test_a_failing_store_falls_back_to_the_file_with_a_warning(
                         lambda: wire_ca._KeychainStore("hal-home-0123456789abcdef"))
     ca = wire_ca.load_or_create()
     assert ca.custody == "file"
-    assert "0600 file" in caplog.text and "did not keep the key" in caplog.text
+    protection = "Windows owner-only protected DACL" if os.name == "nt" else "0600 file"
+    assert protection in caplog.text and "did not keep the key" in caplog.text
     assert wire_ca.load().fingerprint == ca.fingerprint
 
 
+@pytest.mark.skipif(os.name == "nt",
+                    reason="the stand-in executable requires POSIX")
 def test_a_working_store_leaves_no_key_file(home, stand_in, monkeypatch):
     monkeypatch.setenv(wire_ca.STORE_ENV, "auto")
     monkeypatch.setattr(wire_ca, "_preferred_store",

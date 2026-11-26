@@ -734,3 +734,44 @@ def test_extract_usage_top_level_still_wins_over_choice_level():
 def test_extract_usage_ignores_chunks_without_any_usage():
     data = {"choices": [{"index": 0, "delta": {"content": "x"}, "finish_reason": None}]}
     assert provider._extract_usage(data, {"in": 1, "out": 1}) == {"in": 1, "out": 1}
+
+
+# --- Mistral content blocks (HAL#898) ---------------------------------------
+
+
+def _mistral_block_sse_lines() -> list[str]:
+    """Mistral Large 4's shape: thinking blocks first, then text blocks, then a plain string."""
+    thinking = {"type": "thinking", "thinking": [{"type": "text", "text": "Let me think."}]}
+    chunks = [
+        {"id": "m1", "choices": [{"delta": {"content": [thinking]}, "index": 0}]},
+        {"id": "m1", "choices": [{"delta": {"content": [{"type": "text", "text": "OK"}]}, "index": 0}]},
+        {"id": "m1", "choices": [{"delta": {"content": " done"}, "index": 0}]},
+        {"id": "m1", "choices": [{"delta": {}, "finish_reason": "stop"}],
+         "usage": {"prompt_tokens": 5, "completion_tokens": 3}},
+    ]
+    lines = []
+    for chunk in chunks:
+        lines += [f"data: {json.dumps(chunk)}", ""]
+    return lines + ["data: [DONE]", ""]
+
+
+def test_mistral_content_blocks_become_thinking_and_string_deltas():
+    env = _envelope(flags={"provider": "mistral/mistral-large-4", "max_tokens": 100})
+    fake = _FakeSSEResponse(_mistral_block_sse_lines())
+    with patch.object(provider, "_open_stream", return_value=fake):
+        events = _collect(provider.stream_openai_compat(env))
+    assert [e["type"] for e in events] == ["thinking", "delta", "delta", "completed"]
+    deltas = [e["text"] for e in events if e["type"] == "delta"]
+    assert deltas == ["OK", " done"] and all(isinstance(d, str) for d in deltas)
+    assert "message" not in events[-1], "Mistral thinking must not trigger a reasoning_content echo"
+
+
+@pytest.mark.parametrize("content, expected", [
+    ("plain", ("plain", "")),
+    (None, ("", "")),
+    ([{"type": "thinking", "thinking": "hmm"}], ("", "hmm")),
+    ([{"type": "thinking", "thinking": [{"type": "text", "text": "a"}, "b"]}, {"type": "text", "text": "c"}], ("c", "ab")),
+    (["x", {"type": "image_url", "image_url": "u"}, {"type": "text", "text": 3}], ("x", "")),
+])
+def test_content_parts_splits_answer_from_thinking(content, expected):
+    assert provider._content_parts(content) == expected

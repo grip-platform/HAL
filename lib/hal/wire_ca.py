@@ -20,12 +20,15 @@ Files, under ``$HAL_HOME/state/wire-ca/`` (``HAL_HOME`` defaults to ``~/.hal``):
   revoked.json      the fingerprints of CAs that ``rotate`` replaced. A revoked CA
                     is refused at load, so a restored old certificate cannot
                     come back into use.
-  hal-wire-ca.key   ONLY when no OS secret store is usable: the private key, mode
-                    0600, with a logged warning.
+  hal-wire-ca.key   ONLY when no OS secret store is usable: the private key,
+                    with a logged warning. POSIX restricts it to mode 0600;
+                    Windows gives only SYSTEM and the current user full access
+                    through an explicit protected DACL on the folder and key.
 
 Key custody: the macOS Keychain through ``security`` (service ``hal-wire-ca``),
-Linux libsecret through ``secret-tool`` when it is installed, otherwise the 0600
-file. The account is a digest of the resolved ``HAL_HOME``, so two HAL homes on
+Linux libsecret through ``secret-tool`` when it is installed, otherwise the
+fallback file described above. The account is a digest of the resolved
+``HAL_HOME``, so two HAL homes on
 one host never share a key and the username is not written into the store. The
 secret reaches ``security`` and ``secret-tool`` on stdin, never on the command
 line, which any local process can read through ``ps``. Their error output is
@@ -35,8 +38,12 @@ usable store); ``auto`` is the default.
 Leaves: minted in memory, for ``api.anthropic.com`` only (stricter than the
 constraint, which RFC 5280 extends to subdomains), valid 24 hours, never
 written to disk. ``server_context`` loads one into an ``ssl.SSLContext`` through
-two anonymous pipes opened as ``/dev/fd/N``: the standard library loads a
-certificate chain only from a path, and a pipe's bytes never reach a filesystem.
+two anonymous pipes opened as ``/dev/fd/N`` on POSIX, or two unguessably named,
+local-only, one-shot Windows pipes. The standard library loads a certificate
+chain only from a path, and neither kind of pipe writes bytes to a filesystem.
+The pipe name includes 128 random bits from ``secrets.token_hex(16)`` to prevent
+collisions; access control comes from its security descriptor, not secrecy of
+the name.
 
 Failure is closed. A certificate that exists while its key cannot be read, a
 revoked or expired CA, or a certificate that lost its constraint raises
@@ -56,10 +63,13 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import shutil
 import ssl
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -78,8 +88,21 @@ LEAF_LIFETIME = timedelta(hours=24)
 CLOCK_SKEW = timedelta(minutes=5)
 
 _PIPE_LIMIT = 4096        # a P-256 leaf PEM is ~0.7 KB; every pipe buffer holds 4 KB
+_PIPE_TIMEOUT_S = 5       # a failed Windows named-pipe open must not strand a writer
 _STORE_TIMEOUT_S = 15     # a store that prompts or hangs counts as unusable
 _CA_COMMON_NAME = "HAL wire CA (api.anthropic.com only)"
+
+# Win32 constants used by the deliberately small private ``_winapi`` surface.
+_PIPE_ACCESS_OUTBOUND = 0x00000002
+_FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000
+_PIPE_TYPE_BYTE = 0x00000000
+_PIPE_READMODE_BYTE = 0x00000000
+_PIPE_NOWAIT = 0x00000001
+_PIPE_REJECT_REMOTE_CLIENTS = 0x00000008
+_ERROR_PIPE_CONNECTED = 535
+_ERROR_PIPE_LISTENING = 536
+_OWNER_SECURITY_INFORMATION = 0x00000001
+_DACL_SECURITY_INFORMATION = 0x00000004
 
 _log = logging.getLogger("hal.wire_ca")
 
@@ -104,13 +127,17 @@ def ca_dir() -> Path:
     return hal_home() / "state" / "wire-ca"
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 def ca_cert_path() -> Path:
     """The public CA certificate GRIP's launcher hands to ``NODE_EXTRA_CA_CERTS``."""
     return ca_dir() / CA_CERT_NAME
 
 
 def ca_key_path() -> Path:
-    """The 0600 fallback key file (used only when no OS secret store is usable)."""
+    """The fallback key file (used only when no OS secret store is usable)."""
     return ca_dir() / CA_KEY_NAME
 
 
@@ -122,15 +149,21 @@ def _ensure_dir() -> Path:
     directory = ca_dir()
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
+    if _is_windows():
+        _protect_windows_path(directory, "wire CA folder")
     return directory
 
 
 def _atomic_write(path: Path, data: bytes, mode: int) -> None:
     """Write ``data`` to ``path`` with ``mode`` (umask-independent), atomically."""
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                 | getattr(os, "O_BINARY", 0), mode)
     try:
-        os.fchmod(fd, mode)
+        # os.fchmod exists on Windows only from Python 3.13, and mode bits do
+        # not restrict access there anyway; the public check runs Python 3.12.
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
         os.write(fd, data)
         os.fsync(fd)
     finally:
@@ -162,7 +195,7 @@ def _flock(fd: int) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Key custody: OS secret store, else a 0600 file.
+# Key custody: OS secret store, else a platform-protected fallback file.
 # --------------------------------------------------------------------------- #
 def _run(argv: list, stdin: Optional[bytes] = None) -> Optional[bytes]:
     """A store command's stdout, or None on any failure. Its stderr is discarded."""
@@ -196,13 +229,23 @@ class _FileStore:
             return None
 
     def put(self, key_pem: bytes) -> None:
+        if _is_windows():
+            _ensure_dir()
         _atomic_write(self.path, key_pem, 0o600)
+        if _is_windows():
+            try:
+                _protect_windows_path(self.path, "wire CA private key")
+            except WireCAError:
+                self.path.unlink(missing_ok=True)
+                raise
 
     def clear(self) -> None:
         self.path.unlink(missing_ok=True)
 
     def where(self) -> str:
-        return f"file {self.path} (mode 0600)"
+        protection = ("Windows owner-only protected DACL"
+                      if _is_windows() else "mode 0600")
+        return f"file {self.path} ({protection})"
 
 
 class _KeychainStore:
@@ -291,7 +334,7 @@ def _store_of_kind(kind: str):
 
 
 def _store_key(key_pem: bytes) -> str:
-    """Put the CA key in the preferred store, else the 0600 file. Returns its custody."""
+    """Put the CA key in the preferred store, else the fallback file."""
     store = _preferred_store()
     file_store = _FileStore(ca_key_path())
     if store.kind == "file":
@@ -308,8 +351,10 @@ def _store_key(key_pem: bytes) -> str:
 
 def _fall_back(file_store: _FileStore, key_pem: bytes, reason: str) -> str:
     file_store.put(key_pem)
-    _log.warning("wire CA private key kept in a 0600 file (%s): %s",
-                 file_store.path, reason)
+    protection = ("a file with a Windows owner-only protected DACL"
+                  if _is_windows() else "a 0600 file")
+    _log.warning("wire CA private key kept in %s (%s): %s",
+                 protection, file_store.path, reason)
     return file_store.kind
 
 
@@ -631,9 +676,11 @@ def server_context(leaf: Leaf) -> ssl.SSLContext:
 
 
 def _load_chain_in_memory(context: ssl.SSLContext, cert_pem: bytes, key_pem: bytes) -> None:
+    if os.name == "nt":
+        _load_chain_from_windows_pipes(context, cert_pem, key_pem)
+        return
     if not os.path.isdir("/dev/fd"):
-        raise WireCAError("loading a leaf without writing it to disk needs /dev/fd "
-                          "(macOS or Linux); this platform has none")
+        raise WireCAError("loading a leaf without writing it to disk needs /dev/fd on POSIX")
     cert_fd = _filled_pipe(cert_pem)
     try:
         key_fd = _filled_pipe(key_pem)
@@ -643,6 +690,231 @@ def _load_chain_in_memory(context: ssl.SSLContext, cert_pem: bytes, key_pem: byt
             os.close(key_fd)
     finally:
         os.close(cert_fd)
+
+
+def _load_chain_from_windows_pipes(
+        context: ssl.SSLContext, cert_pem: bytes, key_pem: bytes) -> None:
+    """Load a chain through one-shot Windows named pipes, never the filesystem."""
+    winapi = _WindowsPipeAPI()
+    servers = []
+    error: Optional[BaseException] = None
+    try:
+        for data in (cert_pem, key_pem):
+            servers.append(_WindowsPEMPipe(winapi, data))
+        for server in servers:
+            server.start()
+        context.load_cert_chain(servers[0].path, servers[1].path)
+    except BaseException as exc:
+        error = exc
+    else:
+        error = None
+    finally:
+        for server in servers:
+            try:
+                server.finish()
+            except BaseException as exc:
+                if error is None:
+                    error = exc
+    if error is not None:
+        raise error
+
+
+class _WindowsPipeAPI:
+    """Typed Win32 security and pipe calls unavailable from ``_winapi``."""
+
+    def __init__(self) -> None:
+        import ctypes as c
+        from ctypes import wintypes as w
+
+        self.c = c
+        self.w = w
+        self._user_sid_cache: Optional[str] = None
+
+        class SecurityAttributes(c.Structure):
+            _fields_ = [("nLength", w.DWORD), ("lpSecurityDescriptor", c.c_void_p),
+                        ("bInheritHandle", w.BOOL)]
+
+        self.SecurityAttributes = SecurityAttributes
+        kernel = c.WinDLL("kernel32", use_last_error=True)
+        advapi = c.WinDLL("advapi32", use_last_error=True)
+
+        def bind(dll, name, result, *args):
+            fn = getattr(dll, name)
+            fn.restype, fn.argtypes = result, list(args)
+            return fn
+
+        ptr = c.c_void_p
+        self._create = bind(kernel, "CreateNamedPipeW", w.HANDLE, w.LPCWSTR,
+                            w.DWORD, w.DWORD, w.DWORD, w.DWORD, w.DWORD,
+                            w.DWORD, c.POINTER(SecurityAttributes))
+        self._connect = bind(kernel, "ConnectNamedPipe", w.BOOL, w.HANDLE, ptr)
+        self._write = bind(kernel, "WriteFile", w.BOOL, w.HANDLE, ptr,
+                           w.DWORD, c.POINTER(w.DWORD), ptr)
+        self.CloseHandle = bind(kernel, "CloseHandle", w.BOOL, w.HANDLE)
+        self._free = bind(kernel, "LocalFree", ptr, ptr)
+        self._process = bind(kernel, "GetCurrentProcess", w.HANDLE)
+        self._token = bind(advapi, "OpenProcessToken", w.BOOL, w.HANDLE,
+                           w.DWORD, c.POINTER(w.HANDLE))
+        self._info = bind(advapi, "GetTokenInformation", w.BOOL, w.HANDLE,
+                          c.c_int, ptr, w.DWORD, c.POINTER(w.DWORD))
+        self._sid_string = bind(advapi, "ConvertSidToStringSidW", w.BOOL,
+                                ptr, c.POINTER(w.LPWSTR))
+        self._descriptor = bind(
+            advapi, "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+            w.BOOL, w.LPCWSTR, w.DWORD, c.POINTER(ptr), c.POINTER(w.DWORD))
+        self._set_file_security = bind(advapi, "SetFileSecurityW", w.BOOL,
+                                       w.LPCWSTR, w.DWORD, ptr)
+
+    def _check(self, ok):
+        if not ok:
+            raise self.c.WinError(self.c.get_last_error())
+
+    def _user_sid(self) -> str:
+        if self._user_sid_cache is None:
+            self._user_sid_cache = self._read_user_sid()
+        return self._user_sid_cache
+
+    def _read_user_sid(self) -> str:
+        c, w = self.c, self.w
+        token = w.HANDLE()
+        self._check(self._token(self._process(), 0x0008, c.byref(token)))  # TOKEN_QUERY
+        try:
+            size = w.DWORD()
+            if self._info(token, 1, None, 0, c.byref(size)) or c.get_last_error() != 122:
+                raise WireCAError("GetTokenInformation could not size TokenUser")
+            buffer = c.create_string_buffer(size.value)
+            self._check(self._info(token, 1, buffer, size, c.byref(size)))
+            # TOKEN_USER begins with SID_AND_ATTRIBUTES, whose first field is PSID.
+            sid = c.cast(buffer, c.POINTER(c.c_void_p))[0]
+            text = w.LPWSTR()
+            self._check(self._sid_string(sid, c.byref(text)))
+            try:
+                return text.value
+            finally:
+                self._free(c.cast(text, c.c_void_p))
+        finally:
+            self.CloseHandle(token)
+
+    def _owner_only_sddl(self, inheritable: bool) -> str:
+        sid = self._user_sid()
+        inherit = "OICI" if inheritable else ""
+        return f"O:{sid}D:P(A;{inherit};FA;;;SY)(A;{inherit};FA;;;{sid})"
+
+    @contextlib.contextmanager
+    def _owner_only_descriptor(self, inheritable: bool):
+        c = self.c
+        descriptor = c.c_void_p()
+        try:
+            # Explicit TokenUser, not OW: the default owner can be a group.
+            sddl = self._owner_only_sddl(inheritable)
+            self._check(self._descriptor(sddl, 1, c.byref(descriptor), None))
+            if not descriptor.value:
+                raise WireCAError("SDDL conversion returned a NULL descriptor")
+            yield descriptor
+        finally:
+            if descriptor.value:
+                self._free(descriptor)
+
+    def ProtectPath(self, path: Path) -> None:
+        with self._owner_only_descriptor(inheritable=True) as descriptor:
+            self._check(self._set_file_security(
+                str(path), _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION,
+                descriptor))
+
+    def CreateNamedPipe(self, *args):
+        c = self.c
+        with contextlib.ExitStack() as stack:
+            try:
+                descriptor = stack.enter_context(
+                    self._owner_only_descriptor(inheritable=False))
+            except (OSError, WireCAError) as exc:
+                raise WireCAError(
+                    f"cannot restrict Windows PEM pipe security: {exc}") from exc
+            attributes = self.SecurityAttributes(c.sizeof(self.SecurityAttributes),
+                                                 descriptor, False)
+            handle = self._create(*args, c.byref(attributes))
+            if handle == c.c_void_p(-1).value:
+                raise c.WinError(c.get_last_error())
+            return handle
+
+    def ConnectNamedPipe(self, handle, overlapped):
+        self._check(self._connect(handle, None))
+
+    def WriteFile(self, handle, data, overlapped):
+        written = self.w.DWORD()
+        self._check(self._write(handle, data, len(data), self.c.byref(written), None))
+        return written.value, 0
+
+
+def _protect_windows_path(path: Path, purpose: str) -> None:
+    """Give only SYSTEM and the current user full control of ``path``."""
+    try:
+        _WindowsPipeAPI().ProtectPath(path)
+    except (OSError, WireCAError) as exc:
+        raise WireCAError(f"cannot restrict Windows {purpose} security: {exc}") from exc
+
+
+class _WindowsPEMPipe:
+    """One named-pipe instance which writes one PEM block and then closes."""
+
+    def __init__(self, winapi: Any, data: bytes) -> None:
+        if len(data) > _PIPE_LIMIT:
+            raise WireCAError("a PEM block is larger than one pipe buffer")
+        self._winapi = winapi
+        self._data = data
+        self.path = rf"\\.\pipe\hal-wire-{os.getpid()}-{secrets.token_hex(16)}"
+        self._error: Optional[BaseException] = None
+        self._thread = threading.Thread(target=self._serve, daemon=True,
+                                        name="hal-wire-pem-pipe")
+        self._handle = winapi.CreateNamedPipe(
+            self.path, _PIPE_ACCESS_OUTBOUND | _FILE_FLAG_FIRST_PIPE_INSTANCE,
+            (_PIPE_TYPE_BYTE | _PIPE_READMODE_BYTE | _PIPE_NOWAIT
+             | _PIPE_REJECT_REMOTE_CLIENTS),
+            1, _PIPE_LIMIT, _PIPE_LIMIT, int(_PIPE_TIMEOUT_S * 1000))
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _serve(self) -> None:
+        deadline = time.monotonic() + _PIPE_TIMEOUT_S
+        try:
+            while True:
+                try:
+                    self._winapi.ConnectNamedPipe(self._handle, False)
+                    break
+                except OSError as exc:
+                    if getattr(exc, "winerror", None) == _ERROR_PIPE_CONNECTED:
+                        break
+                    if (getattr(exc, "winerror", None) != _ERROR_PIPE_LISTENING
+                            or time.monotonic() >= deadline):
+                        raise
+                    time.sleep(0.01)
+            offset = 0
+            while offset < len(self._data):
+                if time.monotonic() >= deadline:
+                    raise WireCAError("a Windows named pipe timed out while writing a PEM block")
+                written, _ = self._winapi.WriteFile(self._handle, self._data[offset:], False)
+                if not 0 <= written <= len(self._data) - offset:
+                    raise WireCAError("a Windows named pipe returned an invalid write count")
+                offset += written
+                if written == 0:
+                    time.sleep(0.01)
+        except BaseException as exc:  # relayed on the loading thread without PEM data
+            self._error = exc
+        finally:
+            self._winapi.CloseHandle(self._handle)
+
+    def finish(self) -> None:
+        if self._thread.ident is None:
+            self._winapi.CloseHandle(self._handle)
+            return
+        self._thread.join(_PIPE_TIMEOUT_S + 0.5)
+        if self._thread.is_alive():
+            raise WireCAError("a Windows named pipe timed out while loading a leaf")
+        if self._error is not None:
+            if isinstance(self._error, WireCAError):
+                raise self._error
+            raise WireCAError("a Windows named pipe failed while loading a leaf") from self._error
 
 
 def _filled_pipe(data: bytes) -> int:

@@ -23,9 +23,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from lib.hal.home import HAL_HOME as _HAL_HOME
+from lib.hal.home import hal_home
 
-_INDEX_STATE_PATH = os.path.join(_HAL_HOME, "state", "hal", "vault-index.json")
+
+def _index_state_path() -> Path:
+    return hal_home() / "state" / "hal" / "vault-index.json"
+
 
 # Patterns
 _WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
@@ -78,7 +81,7 @@ class VaultIndexer:
 
         md_files = sorted(self._vault.rglob("*.md"))
         for md_path in md_files:
-            rel = str(md_path.relative_to(self._vault))
+            rel = md_path.relative_to(self._vault).as_posix()
             if _is_hidden(rel):
                 continue
             mtime = md_path.stat().st_mtime
@@ -119,7 +122,7 @@ class VaultIndexer:
         full = self._vault / rel_path
         if not full.is_file():
             return None
-        return full.read_text(errors="replace")
+        return full.read_text(errors="replace", encoding="utf-8")
 
     def backlinks(self, rel_path: str) -> list[str]:
         """Find notes that link TO the given note via [[wikilinks]]."""
@@ -153,7 +156,7 @@ def _is_hidden(rel_path: str) -> bool:
 def _parse_note(path: Path, rel: str, mtime: float) -> Optional[VaultNote]:
     """Parse a single markdown note."""
     try:
-        raw = path.read_text(errors="replace")
+        raw = path.read_text(errors="replace", encoding="utf-8")
     except OSError:
         return None
 
@@ -218,10 +221,11 @@ def _score_note(note: VaultNote, query_words: set[str]) -> float:
 
 def _load_mtime_cache() -> dict[str, float]:
     """Load mtime cache from disk."""
-    if not os.path.isfile(_INDEX_STATE_PATH):
+    path = _index_state_path()
+    if not path.is_file():
         return {}
     try:
-        with open(_INDEX_STATE_PATH, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
@@ -229,6 +233,7 @@ def _load_mtime_cache() -> dict[str, float]:
 
 def _save_mtime_cache(cache: dict[str, float]) -> None:
     """Persist mtime cache to disk."""
-    os.makedirs(os.path.dirname(_INDEX_STATE_PATH), exist_ok=True)
-    with open(_INDEX_STATE_PATH, "w") as f:
+    path = _index_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2)

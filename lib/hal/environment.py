@@ -94,7 +94,7 @@ class EnvironmentStore:
         if not os.path.isfile(path):
             return None
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return Environment.from_dict(json.load(f))
         except (json.JSONDecodeError, KeyError):
             return None

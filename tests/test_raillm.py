@@ -208,7 +208,7 @@ def test_thread_to_messages_omits_system_when_empty():
 
 
 def test_classify_frontier_model():
-    assert classify_model("gemini/gemini-3.1-pro-preview") == ModelTier.FRONTIER
+    assert classify_model("gemini/gemini-4-carbon") == ModelTier.FRONTIER
 
 
 def test_classify_fast_model():
@@ -299,7 +299,7 @@ def test_build_tier_chain_explicit_fallback_order_preserved():
         explicit_fallback=["openai/gpt-4o"],
     )
     openai_idx = chain.index("openai/gpt-4o")
-    gemini_idx = chain.index("gemini/gemini-3.1-pro-preview")
+    gemini_idx = chain.index("gemini/gemini-4-carbon")
     assert openai_idx < gemini_idx
 
 

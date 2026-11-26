@@ -29,7 +29,7 @@ def counter(usage_file: Path) -> UsageCounter:
 
 
 def test_default_usage_path_under_hal_state() -> None:
-    assert str(DEFAULT_USAGE_PATH).endswith(".hal/state/voice/usage.jsonl")
+    assert DEFAULT_USAGE_PATH.parts[-4:] == (".hal", "state", "voice", "usage.jsonl")
 
 
 def test_warn_threshold_is_80_percent() -> None:

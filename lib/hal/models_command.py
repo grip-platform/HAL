@@ -25,12 +25,18 @@ Design:
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
-from lib.hal.home import HAL_HOME
+from lib.hal.home import HAL_HOME, hal_home
 from lib.hal.subscription import auto_detect_subscriptions
 
 _CATALOGUE_PATH = os.path.join(HAL_HOME, "config", "model_catalog.yaml")
+
+
+def _default_catalogue_path() -> str:
+    root = os.environ.get("HAL_ROOT")
+    return str((Path(root) if root else hal_home()) / "config" / "model_catalog.yaml")
 
 # ANSI colour codes (mirrors cli.py palette so output blends in).
 _GREEN = "\033[32m"
@@ -139,7 +145,7 @@ def _parse_catalogue_yaml(path: str) -> list[dict]:
     """
     if not os.path.exists(path):
         return []
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
     entries: list[dict] = []
@@ -238,7 +244,7 @@ def load_catalogue(path: Optional[str] = None) -> list[ModelEntry]:
     Missing fields default sensibly so a sparsely-populated entry still
     renders. Unknown fields in the YAML are ignored.
     """
-    raw_entries = _parse_catalogue_yaml(path or _CATALOGUE_PATH)
+    raw_entries = _parse_catalogue_yaml(path or _default_catalogue_path())
     return [_dict_to_entry(d) for d in raw_entries if d.get("address")]
 
 
@@ -521,7 +527,7 @@ def handle_models_command(registry, arg: str = "", *,
     catalogue = load_catalogue(catalogue_path)
     if not catalogue:
         return (f"  {_YELLOW}Catalogue not found at "
-                f"{catalogue_path or _CATALOGUE_PATH}.{_RESET}")
+                f"{catalogue_path or _default_catalogue_path()}.{_RESET}")
 
     subs = subscriptions if subscriptions is not None else auto_detect_subscriptions()
     annotated = annotate_availability(catalogue, registry, subs)

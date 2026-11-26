@@ -113,6 +113,8 @@ models:
     - {version: 1, effective: "2026-11-10", input: "2", output: "10", cache_read: "0.10", cache_write: null, cache_write_1h: null, source: "aistudio.google.com/docs/pricing read 2026-11-24: '$2.00 through November 30, 2026.' in, '$10.00 through November 30, 2026.' out, '$0.10 through November 30, 2026.' cached; GA 2026-11-10 per the changelog (announced 2026-10-28, restricted access); the doubling from 2026-12-01 is cost_tracker.py _PRICE_SCHEDULE until that day, when this ledger gains its row"}
   gemini-4-hydrogen:
     - {version: 1, effective: "2026-11-12", input: "1.50", output: "7.50", cache_read: "0.075", cache_write: null, cache_write_1h: null, source: "aistudio.google.com/docs/pricing read 2026-11-24: '$1.50' in, '$7.50' out, '$0.075' cached, flat; GA 2026-11-12 per the changelog; no dated change on this page"}
+  gemini-4-neon:
+    - {version: 1, effective: "2026-11-18", input: "3", output: "15", cache_read: "0.15", cache_write: null, cache_write_1h: null, source: "ai.google.dev/gemini-api/docs/pricing read 2026-11-26: '$3.00' in, '$15.00' out, '$0.15' cached, flat; GA 2026-11-18 per the changelog; no dated change on this page"}
   gemini-3.6-flash:
     - {version: 1, effective: "2026-10-18", input: "0.75", output: "3.75", cache_read: "0.075", cache_write: null, cache_write_1h: null, source: "ai.google.dev/gemini-api/docs/pricing read 2026-10-18: '$0.75 through December 31, 2026.' in, '$3.75' out, '$0.075' cached; the doubling from 2027-01-01 is cost_tracker.py _PRICE_SCHEDULE until that day"}
   gemini-3.8-flash:

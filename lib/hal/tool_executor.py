@@ -99,14 +99,14 @@ class ToolExecutor:
             return tracked
 
         tracked.state = ToolState.EXECUTING
-        tracked.started_at = time.monotonic()
+        tracked.started_at = time.perf_counter()
         try:
             tracked.output = tool.execute(tool_input, context)
             tracked.state = ToolState.COMPLETED
         except Exception as exc:
             tracked.output = ToolOutput(content=str(exc), is_error=True)
             tracked.state = ToolState.FAILED
-        tracked.completed_at = time.monotonic()
+        tracked.completed_at = time.perf_counter()
         tracked.duration_ms = (tracked.completed_at - tracked.started_at) * 1000
         return tracked
 

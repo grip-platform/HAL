@@ -41,7 +41,7 @@ echo '{"v":"happi/1.1","id":"audit-1","cmd":"echo","args":["hi"],"flags":{"audit
 bash happi.md install
 ```
 
-Self-bootstrapping: any machine with `bash` and `python3 >= 3.10` runs this
+Self-bootstrapping: any machine with `bash` and `python3 >= 3.11` runs this
 file as-is. No `git clone`, no `pip install`, no other files needed for
 protocol mechanics. v1.0 envelopes dispatch unchanged; v1.1 envelopes
 unlock `flags.audit` and the v1.1 cmd set.
@@ -1813,6 +1813,26 @@ if __name__ == "__main__":
 PYTHON_EOF
 )"
 
+# ----- Python resolver (python.org on Windows may only provide python/py) ----
+resolve_python() {
+  local candidate
+  HAPPI_PYTHON=()
+  for candidate in python3 python; do
+    if "$candidate" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+      HAPPI_PYTHON=("$candidate")
+      break
+    fi
+  done
+  if (( ${#HAPPI_PYTHON[@]} == 0 )); then
+    if py -3 -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+      HAPPI_PYTHON=(py -3)
+    else
+      printf 'Python 3 interpreter not found (tried python3, python, py -3)\n' >&2
+      exit 1
+    fi
+  fi
+}
+
 # ----- cmd handlers ---------------------------------------------------------
 
 cmd_identity() {
@@ -1858,9 +1878,10 @@ EOF
 
 # ----- cmd_run: extract embedded Python runtime + exec ----------------------
 cmd_run() {
+  resolve_python || return 1
   local runtime_py="$HAPPI_TMPDIR/happi-runtime-$$.py"
   printf '%s\n' "$HAPPI_PY" > "$runtime_py"
-  exec python3 "$runtime_py"
+  exec "${HAPPI_PYTHON[@]}" "$runtime_py"
 }
 
 # ----- cmd_install: symlink to ~/.local/bin/happi ---------------------------
@@ -1939,6 +1960,7 @@ cmd_spec_describe() {
 # ----- cmd_morning: subsumed boot routine (verbatim semantics from prior --
 # ----- happi.md, lines 95-360 of the pre-canonical backup) -----------------
 cmd_morning() {
+  resolve_python || return 1
 
 HAL_ROOT="${HAL_ROOT:-$HOME/.hal}"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
@@ -1970,7 +1992,7 @@ fi
 log() { printf '%s\n' "$*" | tee -a "$LOG_FILE" >&2; }
 
 # ------- stage 0: bootstrap check (fresh machine or existing install) -------
-python3 - "$HAL_ROOT" "$DRY" <<'PY'
+"${HAPPI_PYTHON[@]}" - "$HAL_ROOT" "$DRY" <<'PY'
 import sys, pathlib
 hal_root = pathlib.Path(sys.argv[1])
 dry_run  = sys.argv[2] == "1"
@@ -1987,8 +2009,8 @@ if hal_root.is_dir():
 else:
     import shutil, subprocess
     major, minor = sys.version_info[:2]
-    if (major, minor) < (3, 10):
-        print(f"!! Python >= 3.10 required; found {major}.{minor}")
+    if (major, minor) < (3, 11):
+        print(f"!! Python >= 3.11 required; found {major}.{minor}")
         sys.exit(1)
     if not shutil.which("git"):
         print("!! git not found — install git then re-run bash happi.md morning")
@@ -2023,7 +2045,7 @@ fi
 # ------- idempotency gate ---------------------------------------------------
 if [[ -f "$MARKER" ]] && (( FORCE == 0 )); then
   printf '%s' "${D}HAPPI: already ran today ($TODAY). --force to re-run.${Z}\n"
-  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(d, indent=2))" "$MARKER" 2>/dev/null || true
+  "${HAPPI_PYTHON[@]}" -c "import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(d, indent=2))" "$MARKER" 2>/dev/null || true
   exit 0
 fi
 
@@ -2097,20 +2119,20 @@ fi
 
 # ------- stage 3: register today's fresh hypotheses -------------------------
 HYP_ENGINE="$CLAUDE_DIR/lib/hypothesis_engine.py"
-DEADLINE="$(python3 -c "from datetime import date, timedelta; print((date.today() + timedelta(days=1)).isoformat())" 2>/dev/null || echo "$TODAY")"
+DEADLINE="$("${HAPPI_PYTHON[@]}" -c "from datetime import date, timedelta; print((date.today() + timedelta(days=1)).isoformat())" 2>/dev/null || echo "$TODAY")"
 
 register_hypothesis() {
   local tag="$1" claim="$2" metric="$3" prediction="$4"
   if (( DRY == 1 )) || [[ ! -f "$HYP_ENGINE" ]]; then
     return
   fi
-  PYTHONPATH="$CLAUDE_DIR" python3 "$HYP_ENGINE" register \
+  PYTHONPATH="$CLAUDE_DIR" "${HAPPI_PYTHON[@]}" "$HYP_ENGINE" register \
     --pr 0 --claim "$tag: $claim" \
     --metric "$metric" --prediction "$prediction" \
     --deadline "$DEADLINE" >>"$LOG_FILE" 2>&1 || true
 }
 
-warmup_ms="$(python3 - <<PY 2>>"$LOG_FILE" || echo -1
+warmup_ms="$("${HAPPI_PYTHON[@]}" - <<PY 2>>"$LOG_FILE" || echo -1
 import sys, time, pathlib
 sys.path.insert(0, "$HAL_ROOT")
 t0 = time.time()
@@ -2165,7 +2187,7 @@ fi
 
 # ------- stage 5: write idempotency marker ----------------------------------
 if (( DRY == 0 )); then
-  python3 - "$MARKER" "$TODAY" "$(basename "$LATEST_CAPSULE")" "$PASS" "$FAIL" "$warmup_ms" "$polyglot_sha" <<'PY'
+  "${HAPPI_PYTHON[@]}" - "$MARKER" "$TODAY" "$(basename "$LATEST_CAPSULE")" "$PASS" "$FAIL" "$warmup_ms" "$polyglot_sha" <<'PY'
 import json, sys
 marker, today, capsule, p, f, warmup, sha = sys.argv[1:8]
 open(marker, "w").write(json.dumps({

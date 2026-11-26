@@ -63,7 +63,9 @@ class DispatchHappyPath(unittest.TestCase):
     """``osa()`` resolves the registry, validates, interpolates, calls kernel."""
 
     def setUp(self) -> None:
-        self._tmp_log = Path(tempfile.mkstemp(suffix=".log")[1])
+        fd, path = tempfile.mkstemp(suffix=".log")
+        os.close(fd)
+        self._tmp_log = Path(path)
         self.addCleanup(lambda: self._tmp_log.unlink(missing_ok=True))
 
     @patch("lib.hal.osa.dispatch.write_audit")

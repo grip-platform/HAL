@@ -201,13 +201,15 @@ def test_the_step_marker_is_not_counted_as_a_speaker(tmp_path, monkeypatch):
         ),
     )
     real_kernel = InnerspeakerGo
+    # Keep the kernel's files in tmp_path, but let a path the caller passes win:
+    # _run_sitting gives each sitting its own registry (HAL#895).
     monkeypatch.setattr(
         apr, "InnerspeakerGo",
-        lambda **kwargs: real_kernel(
-            fixed_points_path=tmp_path / "fixed-points.jsonl",
-            telemetry_path=tmp_path / "telemetry.jsonl",
+        lambda **kwargs: real_kernel(**{
+            "fixed_points_path": tmp_path / "fixed-points.jsonl",
+            "telemetry_path": tmp_path / "telemetry.jsonl",
             **kwargs,
-        ),
+        }),
     )
 
     review = apr.review_pr(

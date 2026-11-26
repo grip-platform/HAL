@@ -406,6 +406,67 @@ def test_anchor_heads_timestamps_the_snapshot_digest(backend):
     assert Path(result["path"]).name.startswith(datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
 
+def test_two_snapshots_at_one_clock_reading_keep_both(backend):
+    # On a coarse clock two snapshots can be taken at the same reading; the
+    # second must not overwrite the first checkpoint.
+    _thread(backend, rows=2)
+    first = anchor_heads(backend.root, anchor=_disabled_anchor, clock=lambda: 1_800_000_000.0)
+    second = anchor_heads(backend.root, anchor=_disabled_anchor, clock=lambda: 1_800_000_000.0)
+    assert first["path"] != second["path"]
+    assert Path(first["path"]).is_file() and Path(second["path"]).is_file()
+    assert Path(second["path"]).name > Path(first["path"]).name  # names still sort by time
+
+
+def test_publish_new_never_replaces_a_taken_name(tmp_path):
+    target = tmp_path / "heads" / "one.json"
+    assert infinite_thread._publish_new(target, b"first")
+    assert not infinite_thread._publish_new(target, b"second")
+    assert target.read_bytes() == b"first"
+    assert sorted(p.name for p in target.parent.iterdir()) == ["one.json"]  # no temp file left
+
+
+def test_a_snapshot_name_taken_mid_write_moves_on(backend, monkeypatch):
+    # Another writer claims the name between this call choosing it and
+    # publishing it: this snapshot takes the next microsecond, never overwrites.
+    _thread(backend, rows=2)
+    real, rival = infinite_thread._publish_new, []
+
+    def racing(path, data):
+        if not rival:
+            rival.append(path)
+            real(path, b'{"rival": true}')
+        return real(path, data)
+
+    monkeypatch.setattr(infinite_thread, "_publish_new", racing)
+    result = anchor_heads(backend.root, anchor=_disabled_anchor, clock=lambda: 1_800_000_000.0)
+    assert Path(result["path"]) != rival[0]
+    assert rival[0].read_bytes() == b'{"rival": true}'
+    assert Path(result["path"]).name > rival[0].name
+
+
+def test_a_later_snapshot_never_sorts_before_an_earlier_one(backend):
+    # Names are the verifier's chronology: a clock read behind the newest
+    # snapshot's name (a clock stepped back) still yields a later name.
+    _thread(backend, rows=2)
+    first = anchor_heads(backend.root, anchor=_disabled_anchor, clock=lambda: 1_800_000_000.0)
+    second = anchor_heads(backend.root, anchor=_disabled_anchor, clock=lambda: 1_799_999_000.0)
+    assert Path(second["path"]).name > Path(first["path"]).name
+
+
+def test_capture_and_claim_happen_under_the_anchor_lock(backend, monkeypatch):
+    # Overlapping calls must not capture heads in one order and claim names in
+    # the other, so both steps run while the anchor lock is held.
+    _thread(backend, rows=2)
+    seen, capture, publish = [], infinite_thread.heads_snapshot, infinite_thread._publish_new
+    monkeypatch.setattr(infinite_thread, "heads_snapshot",
+                        lambda root: seen.append(infinite_thread._ANCHOR_LOCK.locked()) or capture(root))
+    monkeypatch.setattr(infinite_thread, "_publish_new",
+                        lambda path, data: seen.append(infinite_thread._ANCHOR_LOCK.locked()) or publish(path, data))
+    anchor_heads(backend.root, anchor=_disabled_anchor)
+    assert seen == [True, True]
+    assert not infinite_thread._ANCHOR_LOCK.locked()
+
+
 def test_publish_heads_copies_the_newest_checkpoint_and_never_replaces_it(backend, tmp_path):
     _thread(backend, rows=2)
     anchor_heads(backend.root, anchor=_disabled_anchor)

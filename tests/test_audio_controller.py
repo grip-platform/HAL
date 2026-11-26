@@ -86,26 +86,30 @@ class TestDrain(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _AudioLock cross-process semantics (mocked fcntl)
+# _AudioLock cross-process semantics (mocked portable helper)
 # ---------------------------------------------------------------------------
 
 class TestAudioLock(unittest.TestCase):
     def test_acquire_release_cycle(self):
-        with patch("lib.hal.voice.audio_controller.fcntl") as mock_fcntl:
+        with patch("lib.hal.voice.audio_controller.lock") as mock_lock, \
+             patch("lib.hal.voice.audio_controller.unlock") as mock_unlock:
             lock = _AudioLock(Path("/tmp/test_audio.lock"))
             lock.acquire()
-            mock_fcntl.flock.assert_called_once()
+            mock_lock.assert_called_once()
             lock.release()
-            self.assertEqual(mock_fcntl.flock.call_count, 2)
+            mock_unlock.assert_called_once()
 
     def test_context_manager_releases_on_exception(self):
-        with patch("lib.hal.voice.audio_controller.fcntl"):
+        with patch("lib.hal.voice.audio_controller.lock") as mock_lock, \
+             patch("lib.hal.voice.audio_controller.unlock") as mock_unlock:
             lock = _AudioLock(Path("/tmp/test_audio.lock"))
             try:
                 with lock:
                     raise RuntimeError("boom")
             except RuntimeError:
                 pass
+            mock_lock.assert_called_once()
+            mock_unlock.assert_called_once()
             self.assertIsNone(lock._fd)  # released
 
 

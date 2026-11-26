@@ -53,7 +53,7 @@ class BootMarker:
         if not path.exists():
             return None
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             return cls(
                 date=data["date"],
                 capsule=data["capsule"],
@@ -77,7 +77,7 @@ class BootMarker:
             "warmup_ms": self.warmup_ms,
             "polyglot_sha256": self.polyglot_sha256,
             "watermark": self.watermark,
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
 
     @classmethod
     def for_today(
@@ -273,6 +273,7 @@ def validate_polyglot(happi_path: Path) -> dict[str, bool]:
       - "has_watermark": True if "V>>--<<V" appears in the file
     """
     import subprocess
+    from lib.hal.bash_path import find_bash
 
     try:
         content = happi_path.read_text(encoding="utf-8")
@@ -286,15 +287,19 @@ def validate_polyglot(happi_path: Path) -> dict[str, bool]:
     has_happi_envelope = '"v": "happi/1.0"' in content
     has_watermark = _WATERMARK in content
 
-    try:
-        result = subprocess.run(
-            ["bash", "-n", str(happi_path)],
-            capture_output=True,
-            timeout=5,
-        )
-        bash_syntax_ok = result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    bash = find_bash()
+    if bash is None:
         bash_syntax_ok = False
+    else:
+        try:
+            result = subprocess.run(
+                [bash, "-n", str(happi_path)],
+                capture_output=True,
+                timeout=5,
+            )
+            bash_syntax_ok = result.returncode == 0
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            bash_syntax_ok = False
 
     return {
         "has_markdown_headers": has_markdown_headers,
@@ -327,7 +332,7 @@ def extract_memory_prediction(capsule_path: Path) -> Optional[int]:
 # Bootstrap — fresh-machine HAL installation and prerequisite checks
 # ---------------------------------------------------------------------------
 
-_MIN_PYTHON = (3, 10)
+_MIN_PYTHON = (3, 11)
 _HAL_REPO_URL = "https://github.com/grip-platform/HAL.git"
 _REQUIRED_PACKAGES = ["anthropic", "rich", "httpx"]
 _API_KEY_ENV_VARS = [
@@ -371,7 +376,7 @@ class BootstrapResult:
     def summary(self) -> str:
         parts: list[str] = []
         status = "installed" if self.already_installed else "fresh machine"
-        parts.append(f"HAL root: {self.hal_root} ({status})")
+        parts.append(f"HAL root: {self.hal_root.as_posix()} ({status})")
         for p in self.prereqs:
             mark = "✓" if p.ok else "✗"
             parts.append(f"  {mark} {p.name}: {p.found}")
@@ -438,7 +443,9 @@ def bootstrap_hal(
     """Bootstrap HAL on a fresh machine or validate an existing installation.
 
     On a fresh machine (hal_root absent):
-      1. Verify prerequisites (Python >= 3.10, pip, git).
+      1. Verify prerequisites (Python >= 3.11 -- lib/hal/utils/cch.py imports
+         tomllib with no fallback, which does not exist before 3.11 -- pip,
+         git).
       2. Clone repo_url to hal_root (unless dry_run or git missing).
       3. Install _REQUIRED_PACKAGES via pip (unless dry_run or pip missing).
       4. Detect configured API keys.

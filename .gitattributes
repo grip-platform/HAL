@@ -1,0 +1,2 @@
+# Force LF line endings so all public bin entry points run in Git Bash on Windows.
+bin/* text eol=lf

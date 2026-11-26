@@ -33,7 +33,7 @@ def strict(monkeypatch):
 @pytest.mark.parametrize("opt_in", [[], ["openai-api-key"], ["*"]])
 def test_literal_switch_is_the_only_opt_in(tmp_path, monkeypatch, value, opt_in):
     path = tmp_path / "policy.json"
-    path.write_text(json.dumps({"paid_opt_in": opt_in}))
+    path.write_text(json.dumps({"paid_opt_in": opt_in}), encoding="utf-8")
     monkeypatch.setenv(spend_guard.CONFIG_ENV, str(path))
     if value is not None:
         monkeypatch.setenv("GRIP_CODEX_ALLOW_PAID", value)
@@ -46,7 +46,7 @@ def test_policy_defects_refuse_even_with_literal_opt_in(tmp_path, monkeypatch, d
     path = tmp_path / "policy.json"
     monkeypatch.setenv(spend_guard.CONFIG_ENV, str(path))
     if defect == "malformed":
-        path.write_text('{"paid_opt_in": "*"}')
+        path.write_text('{"paid_opt_in": "*"}', encoding="utf-8")
     if defect == "bug":
         def broken():
             raise RuntimeError("fake policy bug")
@@ -157,13 +157,13 @@ def test_new_openai_key_paths_require_a_guard_audit():
         for name in files:
             path = Path(root) / name
             try:
-                if tokens.search(path.read_text()):
-                    found.add(str(path.relative_to(REPO)))
+                if tokens.search(path.read_text(encoding="utf-8")):
+                    found.add(path.relative_to(REPO).as_posix())
             except UnicodeDecodeError:
                 pass
     assert found <= REFERENCES, f"unaudited OpenAI path: {found - REFERENCES}"
     for path, name in SENDS.items():
-        tree = ast.parse((REPO / path).read_text())
+        tree = ast.parse((REPO / path).read_text(encoding="utf-8"))
         fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
         assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                    and n.func.id == "require_openai_destination" for n in ast.walk(fn)), path

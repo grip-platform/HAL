@@ -25,6 +25,8 @@ import time
 import unittest
 from pathlib import Path
 
+from tests._platform import can_create_symlinks
+
 from lib.hal.grip_harness import (
     ComponentDiff,
     GRIPHarness,
@@ -124,6 +126,11 @@ class AbsorbOneMatrix(unittest.TestCase):
             subprocess.run(["chflags", "nouappnd", skill_dst], check=False)
 
     def test_05_symlink_preserved_as_symlink(self) -> None:
+        if not can_create_symlinks():
+            self.skipTest(
+                "this host cannot create symlinks without an "
+                "elevated/Developer-Mode privilege"
+            )
         skill_src = os.path.join(self.src, "linked")
         os.makedirs(skill_src)
         (Path(skill_src) / "real.md").write_text("content")
@@ -134,6 +141,11 @@ class AbsorbOneMatrix(unittest.TestCase):
         self.assertEqual(os.readlink(dst_link), "real.md")
 
     def test_06_broken_symlink_preserved_intact(self) -> None:
+        if not can_create_symlinks():
+            self.skipTest(
+                "this host cannot create symlinks without an "
+                "elevated/Developer-Mode privilege"
+            )
         skill_src = os.path.join(self.src, "broken")
         os.makedirs(skill_src)
         os.symlink("/does/not/exist", os.path.join(skill_src, "dangling.md"))
@@ -143,6 +155,11 @@ class AbsorbOneMatrix(unittest.TestCase):
         self.assertFalse(os.path.exists(dst_link))
         self.assertEqual(os.readlink(dst_link), "/does/not/exist")
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "Windows chmod()/stat() cannot preserve or report the POSIX executable "
+        "bit distinctly from the read-only attribute",
+    )
     def test_07_executable_mode_preserved(self) -> None:
         skill_src = os.path.join(self.src, "withbin")
         os.makedirs(skill_src)
@@ -224,6 +241,11 @@ class AbsorbOneMatrix(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(skill_dst, "stale.md")))
 
     def test_14_symlink_target_change_updates_destination(self) -> None:
+        if not can_create_symlinks():
+            self.skipTest(
+                "this host cannot create symlinks without an "
+                "elevated/Developer-Mode privilege"
+            )
         skill_src = os.path.join(self.src, "retarget")
         skill_dst = os.path.join(self.dst, "retarget")
         os.makedirs(skill_src)

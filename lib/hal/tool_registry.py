@@ -115,7 +115,7 @@ class ToolRegistry:
             if tool.source == "custom"
         }
         os.makedirs(os.path.dirname(_CUSTOM_TOOLS_PATH), exist_ok=True)
-        with open(_CUSTOM_TOOLS_PATH, "w") as f:
+        with open(_CUSTOM_TOOLS_PATH, "w", encoding="utf-8") as f:
             json.dump(custom, f, indent=2)
 
     def _load_custom(self) -> None:
@@ -123,7 +123,7 @@ class ToolRegistry:
         if not os.path.exists(_CUSTOM_TOOLS_PATH):
             return
         try:
-            with open(_CUSTOM_TOOLS_PATH) as f:
+            with open(_CUSTOM_TOOLS_PATH, encoding="utf-8") as f:
                 data = json.load(f)
             for name, d in data.items():
                 self._tools[name] = ToolDef(

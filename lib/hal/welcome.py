@@ -372,7 +372,7 @@ def _render_program_args(hal_bin: Path, extra_args: list[str]) -> str:
     """
     def _esc(s: str) -> str:
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    lines = [f"        <string>{_esc(str(hal_bin))}</string>",
+    lines = [f"        <string>{_esc(hal_bin.as_posix())}</string>",
              "        <string>welcome</string>"]
     for arg in extra_args:
         lines.append(f"        <string>{_esc(arg)}</string>")
@@ -392,8 +392,8 @@ def render_launch_agent_plist(
     return LAUNCH_AGENT_PLIST_TEMPLATE.format(
         label=label,
         program_args_xml=_render_program_args(hal_bin, extra_args or []),
-        log_path=str(log_path),
-        err_path=str(err_path),
+        log_path=log_path.as_posix(),
+        err_path=err_path.as_posix(),
         path_env=path_env,
     )
 

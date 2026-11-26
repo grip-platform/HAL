@@ -66,7 +66,7 @@ def _ensure_loaded() -> None:
         return
     if os.path.exists(_FEATURES_PATH):
         try:
-            with open(_FEATURES_PATH, "r") as f:
+            with open(_FEATURES_PATH, "r", encoding="utf-8") as f:
                 _cache.update(json.load(f))
         except (json.JSONDecodeError, OSError):
             pass
@@ -78,5 +78,5 @@ def _ensure_loaded() -> None:
 
 def _save() -> None:
     os.makedirs(os.path.dirname(_FEATURES_PATH), exist_ok=True)
-    with open(_FEATURES_PATH, "w") as f:
+    with open(_FEATURES_PATH, "w", encoding="utf-8") as f:
         json.dump(_cache, f, indent=2)

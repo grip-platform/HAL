@@ -12,7 +12,7 @@ State file: ``~/.hal/state/voice/usage.jsonl``
 Record shape: ``{"ts": ISO8601, "ym": "YYYY-MM", "provider": str,
 "chars": int, "profile": str}``
 
-Concurrency: ``record()`` acquires an exclusive ``fcntl.flock`` on the
+Concurrency: ``record()`` acquires an exclusive portable advisory lock on the
 append fd so two concurrent ``voice.speak`` calls from separate
 processes cannot interleave their writes.
 
@@ -24,12 +24,13 @@ month", not historical totals.
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from lib.hal.file_lock import lock, unlock
 
 
 DEFAULT_USAGE_PATH = Path.home() / ".hal" / "state" / "voice" / "usage.jsonl"
@@ -74,7 +75,7 @@ class UsageRow:
 class UsageCounter:
     """Append-only per-provider usage tracker.
 
-    Thread-safe and process-safe via ``fcntl.flock``. Malformed lines
+    Thread-safe and process-safe via a portable advisory lock. Malformed lines
     (partial writes, manual edits) are skipped silently rather than
     propagated as exceptions — operator-diagnosable debris must not
     break the synthesis path.
@@ -111,13 +112,13 @@ class UsageCounter:
         }
         line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
         with self._path.open("a", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            lock(f)
             try:
                 f.write(line)
                 f.flush()
                 os.fsync(f.fileno())
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                unlock(f)
 
     def chars_this_month(
         self,
@@ -135,7 +136,7 @@ class UsageCounter:
             return 0
         total = 0
         with self._path.open("r", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            lock(f, shared=True)
             try:
                 for line in f:
                     record = _safe_json_loads(line)
@@ -147,7 +148,7 @@ class UsageCounter:
                     ):
                         total += int(record.get("chars", 0))
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                unlock(f)
         return total
 
     def summary(
@@ -185,7 +186,7 @@ class UsageCounter:
         extras: set[str] = set()
         if self._path.exists():
             with self._path.open("r", encoding="utf-8") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                lock(f, shared=True)
                 try:
                     for line in f:
                         record = _safe_json_loads(line)
@@ -197,7 +198,7 @@ class UsageCounter:
                         if isinstance(provider, str) and provider not in seen:
                             extras.add(provider)
                 finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    unlock(f)
         for provider in sorted(extras):
             chars = self.chars_this_month(provider, ym=target_ym)
             rows.append(

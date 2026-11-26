@@ -18,6 +18,7 @@ import multiprocessing as mp
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from email.utils import format_datetime
@@ -33,6 +34,19 @@ from lib.hal.account_ledger import (UNPOOLED, AccountLedger, AccountResolver, Le
 P = al.PREFIX
 NOW = 1_791_230_000          # 2026-10-05: every test runs on this fixed clock
 RESET_5H = NOW + 3_600
+
+
+def _can_symlink() -> bool:
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "link").symlink_to(root / "target")
+        return True
+    except OSError:
+        return False
+
+
+CAN_SYMLINK = _can_symlink()
 RESET_7D = NOW + 400_000
 TOKEN_A = "fake-account-A-token"
 TOKEN_B = "fake-account-B-token"
@@ -367,6 +381,12 @@ def test_pool_lines_that_are_not_labels_are_ignored_and_a_token_counts_once(tmp_
 @pytest.mark.parametrize("damage", ["no-pool-file", "dir-group-readable", "dir-symlink",
                                     "pool-file-group-readable"])
 def test_a_pool_that_cannot_be_trusted_is_empty(tmp_path, monkeypatch, damage):
+    if damage == "dir-symlink" and not CAN_SYMLINK:
+        pytest.skip("this account lacks the privilege required to create symlinks")
+    if sys.platform == "win32" and damage in {
+        "dir-group-readable", "pool-file-group-readable"
+    }:
+        pytest.skip("Windows chmod/stat cannot express POSIX group-readable modes")
     members = {"acct-a": TOKEN_A}
     if damage == "no-pool-file":
         _store(tmp_path, monkeypatch, members, pool=False)
@@ -384,6 +404,8 @@ def test_a_pool_that_cannot_be_trusted_is_empty(tmp_path, monkeypatch, damage):
 
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
                     reason="root reads a mode-000 directory")
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows chmod cannot make a directory mode 000")
 def test_an_unreadable_store_is_an_empty_pool(tmp_path, monkeypatch):
     _store(tmp_path, monkeypatch, {"acct-a": TOKEN_A}, dir_mode=0o000)
     try:
@@ -392,6 +414,8 @@ def test_an_unreadable_store_is_an_empty_pool(tmp_path, monkeypatch):
         os.chmod(tmp_path / "store", 0o700)
 
 
+@pytest.mark.skipif(not CAN_SYMLINK,
+                    reason="this account lacks the privilege required to create symlinks")
 def test_a_member_that_cannot_be_trusted_is_left_out_alone(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     active = _store(tmp_path, monkeypatch, {"acct-a": TOKEN_A, "acct-open": "fake-open-token",
@@ -533,7 +557,7 @@ def _hold_lock(lock_path: Path, ready: Path) -> subprocess.Popen:
     return holder
 
 
-@pytest.mark.skipif(locked_json.fcntl is None, reason="needs fcntl")
+@pytest.mark.skipif(locked_json.file_lock.fcntl is None, reason="needs fcntl")
 def test_a_held_lock_skips_the_write_within_its_bound(tmp_path):
     path = tmp_path / "ledger.json"
     holder = _hold_lock(path.with_name(path.name + ".lock"), tmp_path / "ready")
@@ -560,7 +584,8 @@ def test_an_update_replaces_the_file_whole_and_leaves_no_temporary_file(tmp_path
     assert locked_json.update_json(path, lambda data: {**data, "a": 1}) == {"a": 1}
     assert locked_json.update_json(path, lambda data: {**data, "b": 2}) == {"a": 1, "b": 2}
     assert json.loads(path.read_text()) == {"a": 1, "b": 2}
-    assert oct(path.stat().st_mode & 0o777) == oct(0o600)
+    if sys.platform != "win32":
+        assert oct(path.stat().st_mode & 0o777) == oct(0o600)
     assert sorted(p.name for p in path.parent.iterdir()) == ["state.json", "state.json.lock"]
 
 
@@ -611,7 +636,7 @@ def _watch_file(path_text: str, stop_text: str) -> tuple:
     while not stop.exists() and time.monotonic() < deadline:
         try:
             raw = path.read_bytes()
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError):
             continue
         reads += 1
         try:
@@ -706,3 +731,37 @@ def test_the_command_line_shows_each_account(ledger, tmp_path, capsys):
     assert stored["accounts"]["acct-a"]["quota"]["status"] == "rejected"
     assert al.main(["--path", str(tmp_path / "none.json")]) == 0
     assert "no account observed yet" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("exit_code,query_ok,expected", [(259, True, True), (0, True, False), (0, False, True)])
+def test_windows_liveness_uses_cached_functions_and_closes_handle(monkeypatch, exit_code, query_ok, expected):
+    import ctypes
+    from ctypes import wintypes
+    from types import SimpleNamespace
+
+    calls = []
+
+    def query(handle, pointer):
+        assert handle == 123
+        pointer._obj.value = exit_code
+        return query_ok
+
+    monkeypatch.setattr(al, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(al, "ctypes", ctypes, raising=False)
+    monkeypatch.setattr(al, "wintypes", wintypes, raising=False)
+    monkeypatch.setattr(al, "open_process", lambda *args: calls.append(args) or 123, raising=False)
+    monkeypatch.setattr(al, "get_exit_code", query, raising=False)
+    monkeypatch.setattr(al, "close_handle", lambda handle: calls.append(handle), raising=False)
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **k: pytest.fail("reloaded kernel32"), raising=False)
+    assert al._alive("42") is expected
+    assert al._alive("42") is expected
+    assert calls == [(0x1000, False, 42), 123] * 2
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires actual Windows kernel32")
+def test_windows_liveness_does_not_reload_kernel32(monkeypatch):
+    import ctypes
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **k: pytest.fail("reloaded kernel32"))
+    assert al._alive(str(os.getpid()))
+    assert al._alive(str(os.getpid()))

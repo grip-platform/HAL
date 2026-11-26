@@ -63,7 +63,7 @@ def _watch(path_text: str, stop_text: str) -> tuple:
     while not stop.exists() and time.monotonic() < deadline:
         try:
             raw = path.read_bytes()
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError):
             continue
         reads += 1
         try:

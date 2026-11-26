@@ -287,7 +287,7 @@ class AutoHarness:
         os.makedirs(_REPORTS_DIR, exist_ok=True)
         safe_name = report.repo.replace("/", "-")
         path = os.path.join(_REPORTS_DIR, f"{safe_name}.json")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(report.to_dict(), f, indent=2)
 
 
@@ -340,7 +340,7 @@ def _read_entry_points(clone_dir: str) -> list[str]:
     for name in _ENTRY_POINT_NAMES:
         path = os.path.join(clone_dir, name)
         if os.path.exists(path):
-            with open(path, "r", errors="replace") as f:
+            with open(path, "r", errors="replace", encoding="utf-8") as f:
                 content = f.read(2000)
             lines.append(f"=== {name} ===\n{content}\n")
     return lines
@@ -377,7 +377,7 @@ def _read_file_headers(clone_dir: str, files: list[tuple[str, int]]) -> list[str
     lines: list[str] = []
     for rel_path, size in files:
         full = os.path.join(clone_dir, rel_path)
-        with open(full, "r", errors="replace") as f:
+        with open(full, "r", errors="replace", encoding="utf-8") as f:
             header = f.read(1500)
         lines.append(f"=== {rel_path} ({size} bytes) ===\n{header}\n")
     return lines

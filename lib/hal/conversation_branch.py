@@ -105,5 +105,5 @@ class BranchManager:
             path = os.path.join(_BRANCHES_DIR, f"{branch_id}.json")
             data = branch.to_dict()
             data["history"] = [{"role": m.role, "content": m.content} for m in branch.history]
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)

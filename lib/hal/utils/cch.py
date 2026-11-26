@@ -243,7 +243,25 @@ _ADAPTIVE_THINKING_BETA_HEADER = "adaptive-thinking-2026-01-28"
 # when Anthropic confirms the feature is GA for that model — a
 # speculative true surfaces as a 400 at request time.
 _HAL_HOME_PATH = Path(os.environ.get("HAL_HOME", os.path.expanduser("~/.hal")))
-_MODELS_TOML = _HAL_HOME_PATH / "configs" / "models.toml"
+# The configs folder this module ships beside: <checkout>/configs.
+_CHECKOUT_CONFIGS = Path(__file__).resolve().parents[3] / "configs"
+
+
+def _config_path(name: str) -> Path:
+    """``$HAL_HOME/configs/<name>`` when that file exists, else this checkout's copy.
+
+    HAL_HOME is the runtime home, and on an ordinary install it is also the
+    checkout, so every setup that works today takes the first branch unchanged.
+    A home with no configs folder gets the files this code ships with. That
+    covers tests/conftest.py, which gives every test an empty HAL_HOME: a test
+    that imported this module first used to raise ImportError for the model
+    registry and silently lose the mode table.
+    """
+    home_copy = _HAL_HOME_PATH / "configs" / name
+    return home_copy if home_copy.is_file() else _CHECKOUT_CONFIGS / name
+
+
+_MODELS_TOML = _config_path("models.toml")
 
 
 def _load_model_capabilities(path: Path = _MODELS_TOML) -> dict[str, dict[str, bool]]:
@@ -291,7 +309,7 @@ _CONSERVATIVE_DEFAULTS = {
 # write-heavy, rsi is fire-heavy) without code changes. Missing file
 # falls back to ``_DEFAULT_CONTEXT_STRATEGY``, mirroring TF>>'s
 # default-config-on-missing-source pattern from src/utils/model/configs.ts.
-_MODE_STRATEGIES_TOML = _HAL_HOME_PATH / "configs" / "mode_context_strategies.toml"
+_MODE_STRATEGIES_TOML = _config_path("mode_context_strategies.toml")
 
 _VALID_STRATEGY_KEYS = frozenset({
     "clear_tool_results",

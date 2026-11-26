@@ -23,7 +23,12 @@ This guide gets you from zero to productive in under 10 minutes.
 
 ## Prerequisites
 
-- **Python 3.9+** (check with `python3 --version`)
+- **Python 3.11+** (check with `python3 --version`). HAL's Claude Code
+  subscription signer (`lib/hal/utils/cch.py`) imports the standard library's
+  `tomllib`, added in Python 3.11 with no fallback, so an older interpreter
+  silently drops that signer. macOS ships `/usr/bin/python3` at 3.9.6, which
+  is too old — install a newer Python (Homebrew, pyenv, or python.org) and
+  make sure it is the one `python3` resolves to.
 - **git** (check with `git --version`)
 - **macOS, Linux, or Windows** (Git Bash)
 - **Optional:** [Ollama](https://ollama.com) for local models (unlimited, zero cost, fully private)

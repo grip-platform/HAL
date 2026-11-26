@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._platform import can_create_symlinks
+
 from lib.agora_pr_review import (
     _EVIDENCE_MAX_CHARS,
     _EVIDENCE_MAX_REFS,
@@ -108,6 +110,11 @@ def test_appendix_rejects_symlink_escaping_checkout(repo: Path, tmp_path_factory
     # A symlink INSIDE the repo pointing OUTSIDE must not leak content:
     # _cited_block resolves BEFORE the containment check, so the resolved
     # target lands outside root and renders INVALID PATH.
+    if not can_create_symlinks():
+        pytest.skip(
+            "this host cannot create symlinks without an "
+            "elevated/Developer-Mode privilege"
+        )
     outside = tmp_path_factory.mktemp("outside") / "secret.py"
     outside.write_text("TOP-SECRET-CONTENT\n", encoding="utf-8")
     link = repo / "lib" / "sneaky.py"

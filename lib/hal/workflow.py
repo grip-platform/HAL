@@ -131,7 +131,7 @@ class Workflow:
                 for s in self._steps
             ],
         }
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return path
 
@@ -142,7 +142,7 @@ def load_workflow(name: str) -> Workflow | None:
     if not os.path.exists(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         wf = Workflow(data["name"])
         for s in data.get("steps", []):
@@ -216,7 +216,7 @@ def _tool_read(name: str, params: dict) -> StepResult:
     if not path or not os.path.exists(path):
         return StepResult(name=name, output="", success=False, error=f"File not found: {path}")
     try:
-        with open(path, "r", errors="replace") as f:
+        with open(path, "r", errors="replace", encoding="utf-8") as f:
             content = f.read(10000)
         return StepResult(name=name, output=content, success=True)
     except OSError as e:

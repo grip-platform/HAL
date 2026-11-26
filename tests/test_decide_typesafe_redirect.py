@@ -61,6 +61,9 @@ def _recorder(seen: list) -> type:
             return parsed
 
         def do_GET(self):
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length:
+                self.rfile.read(length)
             self.send_response(200)
             self.send_header("Content-Length", "2")
             self.end_headers()
@@ -79,6 +82,9 @@ def _redirector(code: int, location: str) -> type:
 
     class Redirector(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length:
+                self.rfile.read(length)
             self.send_response(code)
             self.send_header("Location", location)
             self.send_header("Content-Length", "0")
@@ -117,7 +123,8 @@ def test_a_refused_redirect_ends_as_bad_response_with_one_attempt_and_no_spend(c
     map a non-5xx status to another reason in ``_reason`` (the reason changes).
     """
     policy = tmp_path / "spend-policy.json"
-    policy.write_text(json.dumps({"paid_opt_in": [SOURCE], "daily_caps_usd": {SOURCE: 1}}))
+    policy.write_text(json.dumps({"paid_opt_in": [SOURCE], "daily_caps_usd": {SOURCE: 1}}),
+                      encoding="utf-8")
     monkeypatch.setenv(spend_guard.CONFIG_ENV, str(policy))
     sent: list = []
 
