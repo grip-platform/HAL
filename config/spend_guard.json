@@ -1,0 +1,11 @@
+{
+  "_about": "HAL's spend guard (lib/hal/spend_guard.py). A paid source is allowed only when its name is in paid_opt_in ('*' opts in every paid source). Names: anthropic-api-key (a metered Anthropic API key), anthropic-overage (subscription traffic after a 2xx showed paid extra usage; Anthropic bills it only when the account's own extra usage is switched on), typesafe-api-key (TypeSafe's decision API, prepaid credits; lib/hal/decide/typesafe.py). A missing, unreadable or malformed file refuses every paid source. There is no date rule (removed 2026-10-06). daily_caps_usd: the most HAL may spend on a source it meters itself in one UTC day, in US dollars. Those sources are anthropic-api-key, used for HAL's own Anthropic calls (lib/hal/anthropic_key_route.py), and typesafe-api-key, priced from each reply's input tokens; each needs BOTH an opt-in above and a cap above 0 here. anthropic-api-key ships at 0, so nothing is spent until the operator sets it. typesafe-api-key is opted in with a $0.10 cap, the operator's decision of 2026-10-17, lowered from the $1 set on 2026-10-10 (about 2.4 million input tokens a day at $0.042 a million; one decision costs about $0.00001 to $0.00004). A source with no cap, or a malformed daily_caps_usd, is refused for those calls only. A cap on any other source is shown by the caps command as not enforced: HAL counts no spend there. python -m lib.hal.spend_guard caps prints each source's cap and today's spend. Contract: docs/infinite-machine-contract.md, 'The spend guard'.",
+  "paid_opt_in": [
+    "anthropic-overage",
+    "typesafe-api-key"
+  ],
+  "daily_caps_usd": {
+    "anthropic-api-key": 0,
+    "typesafe-api-key": 0.1
+  }
+}

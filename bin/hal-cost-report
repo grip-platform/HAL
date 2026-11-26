@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""hal-cost-report — where the calls actually go, by provider.
+
+WHY THIS EXISTS
+    The cost floor is enforced by `tests/test_cost_floor_routing.py`: routine
+    routing cannot reach Top tier. That guard prevents the leak; it cannot show
+    whether the leak is happening anyway somewhere it does not look. This reads
+    the persisted record and reports the real distribution.
+
+    Its plan's own falsifier is: *if subscription quota still empties each week
+    with the floor guard green, the floor is not being respected somewhere the
+    guard cannot see.* This is the instrument that makes that falsifier
+    checkable instead of rhetorical.
+
+SOURCE
+    `~/.hal/logs/gateway-audit.jsonl`, one record per gateway call:
+    ``{ts, event, path, upstream, status, served, failed_over, latency_ms}``.
+
+WHAT IT REPORTS, AND WHAT IT CANNOT
+    The audit carries **calls**, latency and failover — it does **not** carry
+    token counts. So this reports the *share of traffic* by provider, which is
+    the decision-relevant number for the floor, and it will NOT print a dollar
+    figure it cannot source. Token-level cost needs a token field in the audit;
+    until then, share is the honest measurement.
+
+    bin/hal-cost-report [--days N] [--audit PATH] [--json]
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import datetime as dt
+import json
+import os
+import sys
+from pathlib import Path
+
+HAL_HOME = Path(os.environ.get("HAL_HOME", str(Path.home() / ".hal")))
+DEFAULT_AUDIT = HAL_HOME / "logs" / "gateway-audit.jsonl"
+
+#: Providers whose usage spends subscription quota or premium per-token rates.
+#: Matched by whole segment, never substring (see the floor guard's reasoning).
+TOP_TIER = frozenset({"anthropic", "claude", "astra", "gpt-6-astra"})
+
+MODEL_KEYS = ("model", "model_id", "requested_model", "upstream_model")
+
+
+def _is_top_tier(name: str) -> bool:
+    """True when any segment of the name is a Top-tier marker.
+
+    Segments split on ``/``, ``:`` **and ``-``**: the gateway labels the
+    subscription path ``anthropic-primary``, and splitting only on the first two
+    let that label through unflagged — under-reporting the very number this tool
+    exists to surface (caught by running it).
+    """
+    cleaned = str(name).replace(":", "/").replace("-", "/")
+    return any(seg.strip().lower() in TOP_TIER for seg in cleaned.split("/"))
+
+
+def _provider(record: dict) -> str:
+    """The provider a record went to. `upstream` is the gateway's own label."""
+    for key in ("provider", "provider_name", "upstream", "upstream_provider"):
+        value = record.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return "unknown"
+
+
+def _model(record: dict) -> str:
+    for key in MODEL_KEYS:
+        value = record.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _wire(path) -> str:
+    """Which client surface a request rode in on.
+
+    The gateway carries TWO very different wires and conflating them was the
+    error this tool was built to undo:
+
+    * ``interactive`` — Anthropic's native ``/v1/messages`` API, i.e. the
+      operator's own Claude Code sessions. This is *usage*, not routing, and no
+      routing change can move it — it is deliberate by definition.
+    * ``fanout`` — the OpenAI-compatible ``/v1/chat/completions`` wire, which is
+      where GRIP/HAL dispatch their own model calls. THIS is the wire the cost
+      floor governs, and the only wire where a Top-tier share is a finding.
+    """
+    p = str(path or "")
+    if p.startswith("/v1/messages") or p.startswith("/v1/responses"):
+        return "interactive (Claude Code / Anthropic wire)"
+    if "/chat/completions" in p or p.startswith("/v1/completions"):
+        return "fanout (HAL/GRIP dispatch)"
+    return "other"
+
+
+def _parse_ts(value) -> dt.datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def summarise(audit: Path, *, days: int, now: dt.datetime | None = None) -> dict:
+    """Aggregate the audit over the trailing *days* window."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    cutoff = now - dt.timedelta(days=days)
+
+    by_provider: collections.Counter = collections.Counter()
+    by_model: collections.Counter = collections.Counter()
+    by_wire: collections.Counter = collections.Counter()
+    failovers = 0
+    total = 0
+    unparsed = 0
+    earliest = latest = None
+
+    with audit.open(errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                unparsed += 1
+                continue
+            if not isinstance(record, dict):
+                unparsed += 1
+                continue
+            ts = _parse_ts(record.get("ts"))
+            if ts is not None:
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=dt.timezone.utc)
+                if ts < cutoff:
+                    continue
+                earliest = ts if earliest is None or ts < earliest else earliest
+                latest = ts if latest is None or ts > latest else latest
+            total += 1
+            by_provider[_provider(record)] += 1
+            by_wire[_wire(record.get("path"))] += 1
+            model = _model(record)
+            if model:
+                by_model[model] += 1
+            if record.get("failed_over"):
+                failovers += 1
+
+    top_tier = sum(n for p, n in by_provider.items() if _is_top_tier(p))
+    return {
+        "window_days": days,
+        "window_start": earliest.isoformat() if earliest else None,
+        "window_end": latest.isoformat() if latest else None,
+        "calls": total,
+        "unparsed_lines": unparsed,
+        "by_provider": dict(by_provider.most_common()),
+        "by_model": dict(by_model.most_common(15)),
+        "by_wire": dict(by_wire.most_common()),
+        "top_tier_calls": top_tier,
+        "top_tier_share": round(top_tier / total, 4) if total else 0.0,
+        "failovers": failovers,
+    }
+
+
+def _render(report: dict, audit: Path) -> str:
+    lines = [
+        f"hal-cost-report — {audit}",
+        f"window: last {report['window_days']}d  "
+        f"({report['window_start'] or '?'} -> {report['window_end'] or '?'})",
+        f"calls:  {report['calls']:,}"
+        + (f"   (unparsed lines: {report['unparsed_lines']:,})"
+           if report["unparsed_lines"] else ""),
+        "",
+        "calls by wire — READ THIS FIRST",
+    ]
+    total = report["calls"] or 1
+    for wire, count in report["by_wire"].items():
+        lines.append(f"  {wire:<44} {count:>9,}  {count / total:6.1%}")
+    lines += [
+        "",
+        "share of calls by provider",
+    ]
+    for provider, count in report["by_provider"].items():
+        flag = "  <-- TOP TIER (subscription quota / premium rate)" \
+            if _is_top_tier(provider) else ""
+        lines.append(f"  {provider:<24} {count:>9,}  {count / total:6.1%}{flag}")
+    lines += [
+        "",
+        f"TOP-TIER SHARE: {report['top_tier_share']:.1%}  "
+        f"({report['top_tier_calls']:,} of {report['calls']:,} calls)",
+        f"failovers:      {report['failovers']:,}",
+        "",
+        "top models",
+    ]
+    for model, count in report["by_model"].items():
+        lines.append(f"  {model:<40} {count:>9,}")
+    lines += [
+        "",
+        "NOTE: the audit carries calls and latency, not tokens — so this reports",
+        "SHARE of traffic and prints no dollar figure it cannot source.",
+        "",
+        "IMPORTANT: only the FANOUT wire is governed by the cost floor. A Top-tier",
+        "share on the INTERACTIVE wire is the operator's own Claude Code usage,",
+        "not mis-routing — no routing change can move it. Judge the two separately.",
+    ]
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--days", type=int, default=7)
+    ap.add_argument("--audit", default=str(DEFAULT_AUDIT))
+    ap.add_argument("--json", action="store_true", dest="as_json")
+    args = ap.parse_args(argv)
+
+    audit = Path(args.audit)
+    if not audit.is_file():
+        print(f"no audit log at {audit}", file=sys.stderr)
+        return 2
+
+    report = summarise(audit, days=args.days)
+    if args.as_json:
+        print(json.dumps(report, indent=1))
+    else:
+        print(_render(report, audit))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

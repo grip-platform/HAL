@@ -1,0 +1,492 @@
+{
+  "_comment": "osa script registry. α-3a seeded 3 scripts; β-1 adds 10 more. All tier-2+ entries require a capability token at dispatch time (see lib/hal/osa/auth.py). Pattern constraints and max_length are council-mandated for injection-safety.",
+  "scripts": {
+    "battery_get": {
+      "tier": 1,
+      "description": "Return current battery percent (e.g. '87%').",
+      "body": "do shell script \"pmset -g batt | grep -Eo '[0-9]+%' | head -1\"",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "volume_get": {
+      "tier": 1,
+      "description": "Return current output volume (0-100).",
+      "body": "return output volume of (get volume settings)",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "notification": {
+      "tier": 2,
+      "description": "Display a macOS local notification.",
+      "body": "display notification {body} with title {title}",
+      "params": [
+        {
+          "name": "title",
+          "type": "str",
+          "required": true,
+          "pattern": "^[\\x20-\\x7E]+$",
+          "max_length": 100
+        },
+        {
+          "name": "body",
+          "type": "str",
+          "required": true,
+          "pattern": "^[\\x20-\\x7E\\s]+$",
+          "max_length": 140
+        }
+      ],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "notification_with_subtitle": {
+      "tier": 2,
+      "description": "Display a macOS local notification with a subtitle line.",
+      "body": "display notification {body} with title {title} subtitle {subtitle}",
+      "params": [
+        {
+          "name": "title",
+          "type": "str",
+          "required": true,
+          "pattern": "^[\\x20-\\x7E]+$",
+          "max_length": 100
+        },
+        {
+          "name": "body",
+          "type": "str",
+          "required": true,
+          "pattern": "^[\\x20-\\x7E\\s]+$",
+          "max_length": 140
+        },
+        {
+          "name": "subtitle",
+          "type": "str",
+          "required": true,
+          "pattern": "^[\\x20-\\x7E]+$",
+          "max_length": 100
+        }
+      ],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "frontmost_app_get": {
+      "tier": 1,
+      "description": "Return the name of the frontmost application.",
+      "body": "tell application \"System Events\" to return name of first application process whose frontmost is true",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "idle_time_get": {
+      "tier": 1,
+      "description": "Return seconds since last user input (keyboard/mouse).",
+      "body": "return (do shell script \"ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}'\") as integer",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "display_count_get": {
+      "tier": 1,
+      "description": "Return the number of connected displays.",
+      "body": "tell application \"Finder\" to return count of displays of (get desktop picture info)",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "clipboard_get": {
+      "tier": 2,
+      "description": "Return the current clipboard text contents. Tier 2 — clipboard may contain secrets.",
+      "body": "return (the clipboard as text)",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "volume_set": {
+      "tier": 2,
+      "description": "Set the output volume (0-100).",
+      "body": "set volume output volume {level}",
+      "params": [
+        {
+          "name": "level",
+          "type": "str",
+          "required": true,
+          "pattern": "^(?:[0-9]|[1-9][0-9]|100)$",
+          "max_length": 3
+        }
+      ],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "screen_lock": {
+      "tier": 2,
+      "description": "Lock the current user session (sleep display).",
+      "body": "tell application \"System Events\" to keystroke \"q\" using {control down, command down}",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "dark_mode_toggle": {
+      "tier": 2,
+      "description": "Toggle the system appearance between light and dark mode.",
+      "body": "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "caffeinate_start": {
+      "tier": 2,
+      "description": "Prevent the Mac from sleeping for a bounded interval (1-99999 seconds, up to ~27h — covers the GRIP /mac morning 8h boot ritual and /mac watch 3h stream; previous 1h cap silently rejected both).",
+      "body": "do shell script \"caffeinate -di -t {seconds} > /dev/null 2>&1 & echo started\"",
+      "params": [
+        {
+          "name": "seconds",
+          "type": "str",
+          "required": true,
+          "pattern": "^[1-9][0-9]{0,4}$",
+          "max_length": 5
+        }
+      ],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "dnd_status_get": {
+      "tier": 1,
+      "description": "Return 1 if Focus/Do Not Disturb is active, 0 otherwise.",
+      "body": "do shell script \"defaults -currentHost read com.apple.notificationcenterui doNotDisturb 2>/dev/null || echo 0\"",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "speak": {
+      "tier": 2,
+      "description": "Speak a short message using the system voice.",
+      "body": "say {text}",
+      "params": [
+        {
+          "name": "text",
+          "type": "str",
+          "required": true,
+          "pattern": "^[\\x20-\\x7E\\s]+$",
+          "max_length": 200
+        }
+      ],
+      "timeout_s": 15,
+      "language": "AppleScript"
+    },
+    "tab_close_chromium_by_url": {
+      "tier": 2,
+      "description": "Close all tabs whose URL contains a given substring, in a Chromium-family browser (Chrome/Arc/Brave/Edge/Chromium/Vivaldi/Opera). Returns closed count as string.",
+      "body": "tell application {browser}\n  set closedCount to 0\n  repeat with w in windows\n    set tabList to tabs of w\n    repeat with i from (count of tabList) to 1 by -1\n      set t to item i of tabList\n      if URL of t contains {url_pattern} then\n        close t\n        set closedCount to closedCount + 1\n      end if\n    end repeat\n  end repeat\n  return closedCount\nend tell",
+      "params": [
+        {
+          "name": "browser",
+          "type": "str",
+          "required": true,
+          "pattern": "^(Google Chrome|Brave Browser|Arc|Microsoft Edge|Chromium|Vivaldi|Opera)$",
+          "max_length": 30
+        },
+        {
+          "name": "url_pattern",
+          "type": "str",
+          "required": true,
+          "pattern": "^[A-Za-z0-9\\-._~:/?#\\[\\]@!$&'()*+,;=% ]+$",
+          "max_length": 200
+        }
+      ],
+      "timeout_s": 15,
+      "language": "AppleScript"
+    },
+    "findmy_process_probe": {
+      "tier": 1,
+      "description": "Probe whether the FindMy process is running. Returns 'FindMy' on success; raises an osascript error if the UI-automation permission is missing or the process is absent. Used by GRIP findmy_reader to verify Accessibility reachability.",
+      "body": "tell application \"System Events\" to get name of first process whose name is \"FindMy\"",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "findmy_status": {
+      "tier": 1,
+      "description": "Return GRIP Find My's address-free status: one line per watched device or item with its state (moving, parked, with you, stale), how long ago Find My last saw it and its distance from the owner's iPhone. It reads GRIP's own state through `grip-find-my status --brief`; it never drives Find My, never activates an app and never sends a keystroke. When GRIP Find My is not installed on this Mac (no GRIP, or a GRIP too old to have it), the shell exits 3 with a one-line reason; `do shell script` raises that as AppleScript error 3, so osascript prints the reason ending in \"(3)\" and exits 1.",
+      "body": "do shell script \"d=\\\"${CLAUDE_DIR:-$HOME/.claude}\\\"; if [ -x \\\"$d/bin/grip-find-my\\\" ]; then exec \\\"$d/bin/grip-find-my\\\" status --brief; fi; echo 'find-my: GRIP Find My is not installed on this Mac' >&2; exit 3\"",
+      "params": [],
+      "timeout_s": 10,
+      "language": "AppleScript"
+    },
+    "crash_dialog_detect": {
+      "tier": 1,
+      "description": "Detect an active macOS crash-reporter dialog. Returns 'Problem Reporter' | 'UserNotificationCenter' | 'none'. Used by GRIP crash-watchdog to decide whether to dismiss.",
+      "body": "tell application \"System Events\"\n  set crashApps to {\"Problem Reporter\", \"UserNotificationCenter\"}\n  repeat with appName in crashApps\n    if exists process appName then\n      try\n        set winCount to count of windows of process appName\n        if winCount > 0 then\n          return appName as text\n        end if\n      end try\n    end if\n  end repeat\n  return \"none\"\nend tell",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "crash_dialog_dismiss": {
+      "tier": 2,
+      "description": "Dismiss a macOS crash-reporter dialog by clicking OK/Reopen/Close (first available), or sending Escape as a last resort. Process name is whitelist-validated to the two known crash-reporter apps.",
+      "body": "tell application \"System Events\"\n  try\n    tell process {process_name}\n      if exists button \"OK\" of window 1 then\n        click button \"OK\" of window 1\n      else if exists button \"Reopen\" of window 1 then\n        click button \"Reopen\" of window 1\n      else if exists button \"Close\" of window 1 then\n        click button \"Close\" of window 1\n      else\n        key code 53\n      end if\n    end tell\n  end try\nend tell",
+      "params": [
+        {
+          "name": "process_name",
+          "type": "str",
+          "required": true,
+          "pattern": "^(Problem Reporter|UserNotificationCenter)$",
+          "max_length": 30
+        }
+      ],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "tier3_test_echo": {
+      "tier": 3,
+      "description": "γ-2a + γ-2b end-to-end harness. Returns a static string so the consent + audit-redaction + rate-limit path is exercisable without real external effects. NOT intended for production dispatch — used by tests and operator dry-runs.",
+      "body": "return \"tier3_ok\"",
+      "params": [
+        {
+          "name": "marker",
+          "type": "str",
+          "required": true,
+          "pattern": "^[A-Za-z0-9_\\-]+$",
+          "max_length": 40
+        }
+      ],
+      "rate_limit": {
+        "window_s": 60,
+        "max_calls": 3
+      },
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "mute": {
+      "tier": 2,
+      "description": "Mute system audio output.",
+      "body": "set volume with output muted",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "unmute": {
+      "tier": 2,
+      "description": "Unmute system audio output.",
+      "body": "set volume without output muted",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "mute_status_get": {
+      "tier": 1,
+      "description": "Return 'true' if system output is muted, 'false' otherwise.",
+      "body": "return output muted of (get volume settings) as text",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "app_launch": {
+      "tier": 2,
+      "description": "Launch (or activate if already running) a named application.",
+      "body": "tell application {app_name} to activate",
+      "params": [
+        {
+          "name": "app_name",
+          "type": "str",
+          "required": true,
+          "pattern": "^[A-Za-z0-9 .\\-]+$",
+          "max_length": 60
+        }
+      ],
+      "timeout_s": 10,
+      "language": "AppleScript"
+    },
+    "app_quit": {
+      "tier": 2,
+      "description": "Quit a named application gracefully.",
+      "body": "tell application {app_name} to quit",
+      "params": [
+        {
+          "name": "app_name",
+          "type": "str",
+          "required": true,
+          "pattern": "^[A-Za-z0-9 .\\-]+$",
+          "max_length": 60
+        }
+      ],
+      "timeout_s": 10,
+      "language": "AppleScript"
+    },
+    "clipboard_set": {
+      "tier": 2,
+      "description": "Set the clipboard to a plain-text string.",
+      "body": "set the clipboard to {text}",
+      "params": [
+        {
+          "name": "text",
+          "type": "str",
+          "required": true,
+          "pattern": "^[\\x20-\\x7E\\s]+$",
+          "max_length": 4000
+        }
+      ],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "screen_wake": {
+      "tier": 2,
+      "description": "Wake the display if it is sleeping (sends a harmless mouse jiggle via System Events).",
+      "body": "tell application \"System Events\" to key code 63",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "music_play": {
+      "tier": 2,
+      "description": "Start playback in Music.app (or resume if paused).",
+      "body": "tell application \"Music\" to play",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "music_pause": {
+      "tier": 2,
+      "description": "Pause playback in Music.app.",
+      "body": "tell application \"Music\" to pause",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "music_next_track": {
+      "tier": 2,
+      "description": "Skip to the next track in Music.app.",
+      "body": "tell application \"Music\" to next track",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "music_previous_track": {
+      "tier": 2,
+      "description": "Go back to the previous track in Music.app.",
+      "body": "tell application \"Music\" to previous track",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "music_now_playing": {
+      "tier": 1,
+      "description": "Return 'Artist – Title' of the currently playing track in Music.app, or 'nothing playing' if paused/stopped.",
+      "body": "tell application \"Music\"\n  if player state is playing then\n    set t to current track\n    return (artist of t) & \" - \" & (name of t)\n  else\n    return \"nothing playing\"\n  end if\nend tell",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "shortcut_run": {
+      "tier": 2,
+      "description": "Run a named Apple Shortcut via Shortcuts.app. Optional input string passed to the Shortcut.",
+      "body": "tell application \"Shortcuts Events\"\n  run shortcut {name} with input {input}\nend tell",
+      "params": [
+        {
+          "name": "name",
+          "type": "str",
+          "required": true,
+          "pattern": "^[A-Za-z0-9 _\\-]+$",
+          "max_length": 100
+        },
+        {
+          "name": "input",
+          "type": "str",
+          "required": false,
+          "default": "",
+          "pattern": "^[\\x20-\\x7E\\s]*$",
+          "max_length": 1000
+        }
+      ],
+      "timeout_s": 60,
+      "language": "AppleScript"
+    },
+    "imessage_send": {
+      "tier": 2,
+      "description": "Send an iMessage to a phone number or email handle via Messages.app.",
+      "body": "tell application \"Messages\"\n  set targetBuddy to buddy {handle} of (first service whose service type = iMessage)\n  send {text} to targetBuddy\nend tell",
+      "params": [
+        {
+          "name": "handle",
+          "type": "str",
+          "required": true,
+          "pattern": "^[A-Za-z0-9._%+\\-@+]+$",
+          "max_length": 100
+        },
+        {
+          "name": "text",
+          "type": "str",
+          "required": true,
+          "pattern": "^[\\x20-\\x7E\\s]+$",
+          "max_length": 4000
+        }
+      ],
+      "timeout_s": 15,
+      "language": "AppleScript"
+    },
+    "sleep_now": {
+      "tier": 3,
+      "description": "Put the Mac to sleep immediately. Tier-3 — always requires explicit confirmation.",
+      "body": "tell application \"System Events\" to sleep",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "shutdown": {
+      "tier": 3,
+      "description": "Shut down the Mac. Tier-3 — always requires explicit confirmation.",
+      "body": "tell application \"System Events\" to shut down",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "restart": {
+      "tier": 3,
+      "description": "Restart the Mac. Tier-3 — always requires explicit confirmation.",
+      "body": "tell application \"System Events\" to restart",
+      "params": [],
+      "timeout_s": 5,
+      "language": "AppleScript"
+    },
+    "open_url_fullscreen": {
+      "tier": 2,
+      "description": "Open a web URL in the default browser and put that window into fullscreen. Every failure path returns a documented outcome string rather than raising: 'opening FAILED (<reason>)' if the browser cannot be invoked, otherwise 'opened fullscreen in <app>', 'opened in <app>; fullscreen NOT confirmed', or 'opened; fullscreen unverified (<reason>)'. The fullscreen result is VERIFIED by reading the frontmost window's AXFullScreen attribute, never inferred from the keystroke not raising, and the outcome names the app that actually received it.",
+      "body": "set outcome to \"opened; fullscreen NOT attempted\"\ntry\n  open location {url}\non error errMsg\n  return \"opening FAILED (\" & errMsg & \")\"\nend try\ndelay 1.5\ntry\n  tell application \"System Events\"\n    set frontApp to first application process whose frontmost is true\n    keystroke \"f\" using {command down, control down}\n    delay 0.7\n    set isFull to value of attribute \"AXFullScreen\" of front window of frontApp\n    if isFull is true then\n      set outcome to \"opened fullscreen in \" & (name of frontApp)\n    else\n      set outcome to \"opened in \" & (name of frontApp) & \"; fullscreen NOT confirmed\"\n    end if\n  end tell\non error errMsg\n  set outcome to \"opened; fullscreen unverified (\" & errMsg & \")\"\nend try\nreturn outcome",
+      "params": [
+        {
+          "name": "url",
+          "type": "str",
+          "required": true,
+          "pattern": "^https?://[A-Za-z0-9\\-._~:/?#\\[\\]@!$&'()*+,;=%]+$",
+          "max_length": 300
+        }
+      ],
+      "timeout_s": 25,
+      "language": "AppleScript"
+    },
+    "cast_url_catt": {
+      "tier": 2,
+      "description": "Cast a web URL to a Chromecast/Google TV device using the `catt` CLI. Optional `device` selects a named target; empty (the default) uses catt's own default device, which is non-deterministic when several are present. Requires catt to be installed (pipx install catt) and raises error number 1001 naming the searched locations if it is absent. A failing cast returns 'cast FAILED (<reason>)' rather than raising. Returns 'casting' on success.",
+      "body": "set cattPath to \"\"\nrepeat with candidate in {\"/opt/homebrew/bin/catt\", \"/usr/local/bin/catt\", (POSIX path of (path to home folder)) & \".local/bin/catt\"}\n  try\n    do shell script \"test -x \" & quoted form of (candidate as text)\n    set cattPath to candidate as text\n    exit repeat\n  end try\nend repeat\nif cattPath is \"\" then\n  error \"catt is not installed (looked in /opt/homebrew/bin, /usr/local/bin, ~/.local/bin). Install it with: pipx install catt\" number 1001\nend if\nset deviceArg to \"\"\nif {device} is not \"\" then\n  set deviceArg to \" -d \" & quoted form of {device}\nend if\ntry\n  do shell script quoted form of cattPath & \" cast\" & deviceArg & \" \" & quoted form of {url}\non error errMsg\n  return \"cast FAILED (\" & errMsg & \")\"\nend try\nreturn \"casting\"",
+      "params": [
+        {
+          "name": "url",
+          "type": "str",
+          "required": true,
+          "pattern": "^https?://[A-Za-z0-9\\-._~:/?#\\[\\]@!$&'()*+,;=%]+$",
+          "max_length": 300
+        },
+        {
+          "name": "device",
+          "type": "str",
+          "required": false,
+          "default": "",
+          "pattern": "^[A-Za-z0-9 ._\\-]*$",
+          "max_length": 64
+        }
+      ],
+      "timeout_s": 30,
+      "language": "AppleScript"
+    }
+  }
+}

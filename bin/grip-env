@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""grip-env — decrypt ~/.hal/.env.enc and print `export KEY=VALUE` lines.
+
+Passphrase source: macOS Keychain generic-password service
+"grip-env-password" (fetched via the `security` CLI, same subprocess
+pattern as lib/hal/providers/openai_compat.py so macOS XProtect does
+not trip on the bash-script equivalent).
+
+Decrypted plaintext streams to stdout only — never written to disk.
+
+Every decrypted `GRIP_<NAME>` is emitted with its value, and — when a
+known canonical alias exists — the industry-standard name is also
+emitted with the same value. This means tools that read the
+conventional env var (CLAUDE_CODE_OAUTH_TOKEN, GROQ_API_KEY, …) just
+work after `source <(grip-env)` without any per-tool configuration.
+
+One name is held back. OPENAI_API_KEY bills OpenAI per token, and any
+tool started from the shell would read it without asking either spend
+guard, so it is emitted only when GRIP_CODEX_ALLOW_PAID is exactly "1" --
+whether it would arrive as the GRIP_OPENAI alias or as a line under its
+own name in the encrypted file. That is the same opt-in every other paid
+OpenAI path uses (HAL#668 item 3). Without it, GRIP_OPENAI is still
+emitted under its own name, and one line on stderr says what was held back.
+
+Usage
+-----
+    source <(~/.hal/bin/grip-env)            # load all GRIP_* + aliases
+    eval "$(~/.hal/bin/grip-env)"            # same
+    ~/.hal/bin/grip-env | awk -F= '{print $1}'    # list key names
+
+Overrides (environment)
+-----------------------
+    GRIP_ENV_FILE               path to ciphertext (default: ~/.hal/.env.enc)
+    GRIP_ENV_KEYCHAIN_SERVICE   keychain service (default: grip-env-password)
+"""
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+DEFAULT_ENV_FILE = Path.home() / ".hal" / ".env.enc"
+DEFAULT_KEYCHAIN_SERVICE = "grip-env-password"
+OPENSSL_ARGS = [
+    "openssl", "enc", "-d", "-aes-256-cbc",
+    "-pbkdf2", "-iter", "1000000", "-pass", "stdin",
+]
+EXPORT_LINE_RE = re.compile(r"^[A-Z][A-Z0-9_]*=")
+
+# Canonical aliases: each GRIP_<NAME> also exports under these industry-
+# standard names, using the same value. Tools that read the conventional
+# name (Claude Code, Anthropic SDK, OpenAI SDK, Slack SDK, etc.) work
+# without any per-tool env var setup.
+CANONICAL_ALIASES: dict[str, tuple[str, ...]] = {
+    "GRIP_CLAUDE_OAUTH":         ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"),
+    "GRIP_REMOTE_CLAUDE_OAUTH":  ("CLAUDE_CODE_REMOTE_OAUTH_TOKEN",),
+    "GRIP_ANTHROPIC_EXTERNAL":   ("ANTHROPIC_API_KEY",),
+    "GRIP_OPENAI":               ("OPENAI_API_KEY",),
+    "GRIP_GROQ":                 ("GROQ_API_KEY",),
+    "GRIP_GEMINI_API_KEY":       ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"),
+    "GRIP_GEMINI":               ("GEMINI_API_KEY",),
+    "GRIP_MISTRAL":              ("MISTRAL_API_KEY",),
+    "GRIP_DEEPSEEK":             ("DEEPSEEK_API_KEY",),
+    "GRIP_OPENROUTER":           ("OPENROUTER_API_KEY",),
+    "GRIP_MOONSHOT":             ("MOONSHOT_API_KEY",),
+    "GRIP_DASHSCOPE":            ("DASHSCOPE_API_KEY",),
+    "GRIP_ZHIPU":                ("ZHIPUAI_API_KEY",),
+    "GRIP_SORUXGPT":             ("SORUXGPT_API_KEY",),
+    "GRIP_VULAVULA":             ("VULAVULA_API_KEY",),
+    "GRIP_GOAPI":                ("GOAPI_API_KEY",),
+    "GRIP_MYTHOS_MODEL":          ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+    "GRIP_SLACK_BOT":            ("SLACK_BOT_TOKEN",),
+    "GRIP_SLACK_CHANNEL_ID":     ("SLACK_CHANNEL_ID",),
+    "GRIP_DISCORD_BOT":          ("DISCORD_BOT_TOKEN",),
+    "GRIP_DISCORD_CHANNEL":      ("DISCORD_CHANNEL_ID",),
+}
+
+# Variable names that would let any tool started from the shell bill per
+# token without asking a guard. Each is emitted only when its opt-in variable
+# is exactly "1", whether it reaches the output as an alias of a GRIP_ name
+# or as a line under its own name in the encrypted file (HAL#668 item 3).
+PAID_EXPORT_OPT_IN: dict[str, str] = {
+    "OPENAI_API_KEY": "GRIP_CODEX_ALLOW_PAID",
+}
+
+
+def _env_path() -> Path:
+    override = os.environ.get("GRIP_ENV_FILE")
+    return Path(override) if override else DEFAULT_ENV_FILE
+
+
+def _keychain_service() -> str:
+    return os.environ.get("GRIP_ENV_KEYCHAIN_SERVICE") or DEFAULT_KEYCHAIN_SERVICE
+
+
+def _fetch_passphrase(service: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-w", "-s", service],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _decrypt(env_file: Path, passphrase: str) -> str | None:
+    try:
+        result = subprocess.run(
+            [*OPENSSL_ARGS, "-in", str(env_file)],
+            input=passphrase, capture_output=True, text=True,
+            timeout=10, check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _export_allowed(name: str) -> bool:
+    """False for a paid name whose opt-in is not exactly "1", whether it is a
+    line in the encrypted file or an alias of one. Says so on stderr, naming the
+    variable and its opt-in, never the value."""
+    opt_in = PAID_EXPORT_OPT_IN.get(name)
+    if opt_in is None or os.environ.get(opt_in) == "1":
+        return True
+    print(f"grip-env: {name} not exported: it bills per token; "
+          f"set {opt_in}=1 to opt in", file=sys.stderr)
+    return False
+
+
+def _emit_exports(body: str) -> int:
+    count = 0
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line or not EXPORT_LINE_RE.match(line):
+            continue
+        name, _, value = line.partition("=")
+        if _export_allowed(name):
+            print(f"export {line}")
+            count += 1
+        for alias in CANONICAL_ALIASES.get(name, ()):
+            if not _export_allowed(alias):
+                continue
+            print(f"export {alias}={value}")
+            count += 1
+    return count
+
+
+_USAGE = (
+    "grip-env — decrypt ~/.hal/.env.enc to `export KEY=VALUE` lines.\n"
+    "Takes NO arguments. Usage:\n"
+    "    source <(~/.hal/bin/grip-env)               # load all GRIP_* + aliases\n"
+    "    eval \"$(~/.hal/bin/grip-env)\"               # same\n"
+    "    ~/.hal/bin/grip-env | awk -F= '{print $1}'   # list key NAMES only\n"
+)
+
+
+def main() -> int:
+    # SAFETY (2026-06-22): grip-env emits decrypted secrets on stdout and takes
+    # NO arguments. ANY argument — including -h/--help (no such flag) or a typo —
+    # MUST print usage and exit WITHOUT decrypting, so an unknown-flag probe can
+    # never dump every secret. Origin: a `grip-env --help` probe fell through to
+    # the bare secret-emitting path and leaked all keys into a session transcript.
+    argv = sys.argv[1:]
+    if argv:
+        is_help = any(a in ("-h", "--help", "help") for a in argv)
+        print(_USAGE, file=(sys.stdout if is_help else sys.stderr))
+        return 0 if is_help else 2
+
+    env_file = _env_path()
+    if not env_file.is_file():
+        print(f"grip-env: {env_file} not found", file=sys.stderr)
+        return 1
+
+    service = _keychain_service()
+    passphrase = _fetch_passphrase(service)
+    if not passphrase:
+        print(f"grip-env: Keychain service '{service}' not found", file=sys.stderr)
+        print(
+            f"grip-env: bootstrap — security add-generic-password "
+            f"-s '{service}' -a V -w '<passphrase>' -U -A",
+            file=sys.stderr,
+        )
+        return 2
+
+    body = _decrypt(env_file, passphrase)
+    if body is None:
+        print("grip-env: decrypt failed (wrong passphrase or corrupt file)", file=sys.stderr)
+        return 3
+
+    emitted = _emit_exports(body)
+    if emitted == 0:
+        print("grip-env: decrypted body had no valid KEY=VALUE lines", file=sys.stderr)
+        return 4
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

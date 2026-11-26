@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""hal-audit-rotate — move the gateway audit log aside so a fresh one starts.
+
+WHAT IT DOES
+    One atomic ``os.rename`` of ``$HAL_HOME/logs/gateway-audit.jsonl`` to
+    ``gateway-audit.jsonl.<UTC date>.rotated`` in the same directory. Nothing is
+    copied, truncated or rewritten, so every row the gateway wrote is still there,
+    byte for byte, under the new name. It refuses when the target already exists,
+    so it can never overwrite an earlier rotation. A contamination manifest
+    written by ``hal-audit-contamination`` for the live log
+    (``gateway-audit.jsonl.contamination.json``) is renamed with it, so the
+    manifest stays next to the file its line numbers describe and a later scan of
+    the new live log cannot overwrite it.
+
+WHY A RENAME IS SAFE UNDER A RUNNING GATEWAY
+    The gateway's sink (``lib/hal/gateway_failover.py::_default_sink``) opens the
+    log in append mode for each event and closes it again. A row being written
+    at the moment of the rename lands in the rotated file, because the open
+    handle follows the file, and the next event creates a new live file. No
+    restart is needed. Check that the new file appears after the next request.
+
+WHAT CHANGES FOR THE READERS
+    ``bin/hal-cost-report`` and GRIP's ``grip-infinite-witness`` read only the
+    live file, so after a rotation they see only rows written since. The history
+    is in the rotated file. ``hal-cost-report --audit <rotated file>`` reports on
+    it. ``grip-infinite-witness`` has no such flag: its claims read a window of
+    minutes, but its 24-hour lookback sees only post-rotation rows for the first
+    day.
+
+    bin/hal-audit-rotate [--audit PATH]
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+_MANIFEST_SUFFIX = ".contamination.json"
+
+
+def default_audit() -> Path:
+    """The live audit log, resolved the way the gateway's own sink resolves it."""
+    home = Path(os.environ.get("HAL_HOME", str(Path.home() / ".hal")))
+    return home / "logs" / "gateway-audit.jsonl"
+
+
+def rotated_name(audit: Path, now: Optional[datetime] = None) -> Path:
+    """``<audit>.<UTC date>.rotated`` beside the live log."""
+    day = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+    return audit.with_name(f"{audit.name}.{day}.rotated")
+
+
+def plan(audit: Path, target: Path) -> Tuple[List[Tuple[Path, Path]], Optional[str]]:
+    """The renames to make, or the reason to refuse. Touches nothing."""
+    if not audit.is_file():
+        return [], f"nothing to rotate: {audit} does not exist"
+    moves = [(audit, target)]
+    manifest = audit.with_name(audit.name + _MANIFEST_SUFFIX)
+    if manifest.exists():
+        moves.append((manifest, target.with_name(target.name + _MANIFEST_SUFFIX)))
+    taken = [str(dst) for _, dst in moves if dst.exists()]
+    if taken:
+        return [], "refusing: already exists: " + ", ".join(taken)
+    return moves, None
+
+
+def main(argv: Optional[list] = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--audit", type=Path, default=None,
+                    help="audit log to rotate (default: $HAL_HOME/logs/gateway-audit.jsonl)")
+    args = ap.parse_args(argv)
+    audit = args.audit or default_audit()
+    moves, refusal = plan(audit, rotated_name(audit))
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 1
+    for src, dst in moves:
+        os.rename(src, dst)
+        print(f"{src} -> {dst} ({dst.stat().st_size} bytes)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

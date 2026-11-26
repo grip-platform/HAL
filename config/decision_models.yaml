@@ -1,0 +1,40 @@
+# Decision models: they return typed answers (a probability, a choice, a score),
+# never text. They speak the System One wire format (a state plus typed
+# questions), so they are not chat models and are kept out of
+# config/model_catalog.yaml, whose loader keeps every entry with an address and
+# could route one as a chat model (lib/hal/models_command.py).
+#
+# Read by lib/hal/decide/catalog.py ($HAL_DECISION_MODELS overrides the path).
+# What these models are and are not, and how HAL guards every send: docs/decide.md.
+
+providers:
+  typesafe:
+    endpoint: https://api.typesafe.ai/v1/systemone
+    # Keychain item grip-typesafe on macOS; TYPESAFE_API_KEY or
+    # GRIP_TYPESAFE_API_KEY elsewhere (lib/hal/providers/openai_compat.py).
+    key_source: keychain:grip-typesafe
+    # The spend guard's source name (lib/hal/spend_guard.py). Its opt-in and its
+    # daily cap live in config/spend_guard.json.
+    spend_source: typesafe-api-key
+    # Credits are bought in advance, cannot be refunded, and expire within 12
+    # months (TypeSafe's Master Customer Agreement).
+    billing: prepaid
+    usd_per_million_input_tokens: "0.042"
+    usd_per_million_output_tokens: "0"
+    # A local ceiling only, to avoid uploading what cannot fit: the API enforces
+    # its own token budgets (64k a request, 32k for the state and the longest
+    # question) and refuses an over-budget request with max_tokens_exceeded
+    # rather than truncating it (measured 2026-10-10).
+    max_request_bytes: 524288
+
+models:
+  jev-latest:
+    provider: typesafe
+    # The versioned id that answered on 2026-10-10. A different id in a reply
+    # sets the result's "drifted" flag, so a threshold tuned on this version
+    # is not trusted silently on the next.
+    pinned: jev-1.13.0
+  jev-preview:
+    provider: typesafe
+    # No pin, on purpose: the version it serves has not been observed yet, so no
+    # drift is checked for it. A model without "pinned" never sets "drifted".

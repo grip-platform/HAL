@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""grip-happiverse-status — honest health snapshot of the HAPPIVERSE node.
+
+Probes :4010 (HAL gateway), :3850 (hal-server), :3101 (grip-channel).
+Reads the last witness row from the signed messages-rail log.
+Runs verify_chain for tamper PASS/FAIL.
+Never hides 401/404 — surfaces them as AMBER.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+_HAL_HOME = Path(os.environ.get("HAL_HOME", str(Path.home() / ".hal")))
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+_SERVICES = [
+    ("HAL gateway",   "http://127.0.0.1:4010/v1/models"),
+    ("hal-server",    "http://127.0.0.1:3850/health"),
+    ("grip-channel",  "http://127.0.0.1:3101/health"),
+]
+
+
+def _probe(label: str, url: str) -> str:
+    try:
+        with urllib.request.urlopen(url, timeout=2) as r:
+            return f"UP   {label} ({r.status})"
+    except urllib.error.HTTPError as exc:
+        # 401/404 = server is UP but not authorised/found — AMBER, not DOWN.
+        return f"AMBR {label} (HTTP {exc.code})"
+    except Exception as exc:
+        return f"DOWN {label} ({exc!s:.60})"
+
+
+def _last_witness_row() -> dict | None:
+    from lib.hal.gateway_witness import signed_log_path
+    p = signed_log_path()
+    if not p.exists():
+        return None
+    lines = [ln for ln in p.read_text().splitlines() if ln.strip()]
+    if not lines:
+        return None
+    row = json.loads(lines[-1])
+    return row.get("payload", row)
+
+
+def _chain_status() -> str:
+    from lib.hal.gateway_witness import signed_key_path, signed_log_path
+    from lib.hal.voice.audit import verify_chain
+    log_path = signed_log_path()
+    key_path = signed_key_path()
+    if not log_path.exists() or log_path.stat().st_size == 0:
+        return "PASS (no signed rows yet)"
+    if not key_path.exists():
+        return "AMBR (log present, key missing)"
+    key = key_path.read_bytes()
+    # Cross-file verification: the rail ROTATES and each file chains from the
+    # previous archive's last hmac, so a single-file verify from GENESIS
+    # false-flags the current file's line 1 as TAMPERED (found 2026-08-26;
+    # full-chain check VERIFIED 5/5 files). Thread the hmac across files.
+    files = sorted(log_path.parent.glob(log_path.name + ".*")) + [log_path]
+    prev = None
+    for f in files:
+        ok, bad = (verify_chain(f, key) if prev is None
+                   else verify_chain(f, key, initial_prev_hmac=prev))
+        if not ok:
+            return f"FAIL {f.name} line {bad} — TAMPERED"
+        import json
+        rows = [l for l in f.read_text(errors="replace").strip().splitlines() if l]
+        prev = json.loads(rows[-1]).get("hmac") if rows else prev
+    return f"PASS ({len(files)} files, {log_path.name})"
+
+
+def main() -> int:
+    print("=== HAPPIVERSE node status ===")
+    for label, url in _SERVICES:
+        print(_probe(label, url))
+
+    print()
+    last = _last_witness_row()
+    if last:
+        print(f"Last witness  provider={last.get('provider','?')} "
+              f"model={last.get('model','?')} "
+              f"status={last.get('status','?')} "
+              f"path={last.get('path','?')}")
+    else:
+        print("Last witness  (none yet)")
+
+    chain = _chain_status()
+    print(f"Chain verify  {chain}")
+    return 0 if "FAIL" not in chain else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

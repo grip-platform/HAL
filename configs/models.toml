@@ -1,0 +1,49 @@
+# HAL model capability registry (D2 from TF>> liberation matrix, 2026-04-20)
+#
+# Source pattern: TF>> src/utils/model/configs.ts (declarative model registry).
+# Loaded by lib/hal/utils/cch.py at import time. Each model declares the
+# beta-header gated capabilities it supports. Unknown models fall back to
+# _CONSERVATIVE_DEFAULTS in cch.py (both False) — the safer failure mode
+# is "feature off" rather than 400-on-an-unsupported-beta-header mid-turn.
+#
+# Adding a new model: append a [models."<canonical-id>"] section. Only set
+# a capability to true when Anthropic confirms the feature is GA for that
+# model; speculative `true` surfaces as a 400 at request time.
+#
+# Schema:
+#   adaptive_thinking      — gates "adaptive-thinking-2026-01-28" beta
+#   context_management     — gates "context-management-2025-06-27" beta
+#   token_efficient_tools  — gates "token-efficient-tools-2026-03-28" beta
+#   afk_mode               — gates "afk-mode-2026-01-31" beta
+#   server_compaction      — gates "compact-2026-01-12" beta (opt-in summarisation)
+
+[models."claude-opus-4-7"]
+adaptive_thinking = true
+context_management = true
+token_efficient_tools = true
+afk_mode = true
+server_compaction = true
+
+[models."claude-sonnet-4-6"]
+adaptive_thinking = true
+context_management = true
+token_efficient_tools = true
+afk_mode = true
+server_compaction = true
+
+[models."claude-opus-4-8"]
+# Live-confirmed 2026-05-29: all five betas return 200 on the CCH endpoint
+# (controlled per-capability probe). Previously absent -> conservative
+# defaults (no betas) on the CCH path.
+adaptive_thinking = true
+context_management = true
+token_efficient_tools = true
+afk_mode = true
+server_compaction = true
+
+[models."claude-haiku-4-5-20251001"]
+adaptive_thinking = false
+context_management = true
+token_efficient_tools = true
+afk_mode = true
+# server_compaction omitted -> conservative False (compact not probed for Haiku)

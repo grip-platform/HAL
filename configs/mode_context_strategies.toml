@@ -1,0 +1,73 @@
+# HAL CCH context-management strategy table (D5 from TF>> liberation matrix, 2026-04-20)
+#
+# Maps GRIP mode names to the context-management kwargs accepted by
+# cch.py::_compute_context_management. Mirrors TF>>'s declarative pattern
+# from src/utils/model/configs.ts but for context-pruning behaviour
+# instead of model capabilities.
+#
+# Loaded by resolve_context_strategy(mode) at import time. Missing file
+# falls back to _DEFAULT_CONTEXT_STRATEGY in cch.py — that's the safer
+# failure mode (the conservative defaults never lose work, they just
+# leave more tokens on the table than an aggressive strategy would).
+#
+# Adding a new mode: append a [modes."<mode-name>"] section. Unknown
+# modes resolve to [modes."default"] if present, else to the code-level
+# conservative default.
+#
+# Schema:
+#   clear_tool_results  — drop result blocks from read-type tools (bash,
+#                         grep, read, web_fetch, web_search) when input
+#                         tokens cross the trigger
+#   clear_tool_uses     — drop all tool_use blocks except write-type tools
+#                         (write, str_replace_editor, notebook_edit)
+#   max_input_tokens    — trigger threshold (when to start pruning)
+#   target_input_tokens — keep threshold (prune down to this size)
+#
+# Tuning principle: read-heavy modes prune results aggressively (the
+# context value is in the analysis, not the raw bytes); write-heavy
+# modes keep tool_use blocks (they document edit intent and chain
+# refactors); autonomous loops prune both (max turns per session
+# matters more than per-turn fidelity).
+
+[modes."default"]
+clear_tool_results = false
+clear_tool_uses = false
+max_input_tokens = 180000
+target_input_tokens = 40000
+
+[modes."analysis"]
+# Long read-heavy investigations; aggressive result pruning frees budget
+# for new exploration without losing the synthesis chain.
+clear_tool_results = true
+clear_tool_uses = false
+max_input_tokens = 150000
+target_input_tokens = 60000
+
+[modes."code"]
+# Write-heavy work; preserve tool_use blocks (they show edit intent).
+clear_tool_results = true
+clear_tool_uses = false
+max_input_tokens = 180000
+target_input_tokens = 50000
+
+[modes."rsi"]
+# Autonomous self-improvement loop with many tool fires per turn;
+# aggressive pruning to maximise convergence depth per session.
+clear_tool_results = true
+clear_tool_uses = true
+max_input_tokens = 160000
+target_input_tokens = 30000
+
+[modes."ultrado"]
+# Same shape as rsi — both are autonomous loops.
+clear_tool_results = true
+clear_tool_uses = true
+max_input_tokens = 160000
+target_input_tokens = 30000
+
+[modes."plan"]
+# Plan mode is read-only and exploratory; generous budget, no pruning.
+clear_tool_results = false
+clear_tool_uses = false
+max_input_tokens = 200000
+target_input_tokens = 80000

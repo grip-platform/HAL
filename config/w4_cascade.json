@@ -1,0 +1,27 @@
+{
+  "targets": [],
+  "anthropic_targets": [
+    {
+      "provider": "qwen-token-plan",
+      "model": "qwen3.8-max",
+      "base_url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+      "credential": "grip-qwen-token-plan",
+      "billing": "subscription",
+      "auth": "bearer",
+      "system_messages": "fold",
+      "drop": ["context_management", "diagnostics", "output_config", "safeguards", "thinking"],
+      "drop_tool_fields": ["defer_loading"]
+    },
+    {
+      "provider": "qwen-token-plan",
+      "model": "deepseek-v4-pro",
+      "base_url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+      "credential": "grip-qwen-token-plan",
+      "billing": "subscription",
+      "auth": "bearer",
+      "system_messages": "fold",
+      "drop": ["context_management", "diagnostics", "output_config", "safeguards", "thinking"],
+      "drop_tool_fields": ["defer_loading"]
+    }
+  ]
+}

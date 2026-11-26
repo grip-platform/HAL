@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""osa — HAL osascript dispatch CLI.
+
+Subcommands:
+    list                         Print every registered script name + tier
+    info <name>                  Show one script's schema (tier, params, body)
+    run <name> [--param k=v ...] Execute a script through the auth + audit chain
+    mint <name>                  Mint a capability token for a tier-2+ script
+                                 and print it as JSON (requires HAL_OSA_CAPABILITY_SECRET)
+
+Exit codes:
+    0  success
+    1  dispatch failure (OsaError from kernel, or auth rejected)
+    2  unknown script / validation error
+    3  malformed invocation
+
+Sibling: ``hal osa ...`` routes into this script via bin/hal. The CLI is a
+thin adapter over ``lib.hal.osa.dispatch.osa`` — all authorisation, audit
+logging, and escape rules live in the library, not here.
+"""
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Dict, List
+
+
+_HAL_ROOT = Path(__file__).resolve().parent.parent
+if str(_HAL_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HAL_ROOT))
+
+from lib.hal.osa import (  # noqa: E402
+    CapabilityToken,
+    MissingSecret,
+    OsaError,
+    OsaResult,
+    ParamValidationError,
+    ProvenanceType,
+    ScriptNotRegistered,
+    TokenExpired,
+    TokenInvalid,
+    TokenReused,
+    default_secret,
+    load_registry,
+    mint_token,
+    osa,
+)
+
+
+def _parse_params(pairs: List[str]) -> Dict[str, str]:
+    """Parse ``--param k=v`` pairs into a dict. Raises SystemExit on malformed input."""
+    out: Dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            sys.stderr.write(f"osa: --param requires 'key=value' form, got {pair!r}\n")
+            raise SystemExit(3)
+        key, value = pair.split("=", 1)
+        out[key.strip()] = value
+    return out
+
+
+def _load_token(raw: str) -> CapabilityToken:
+    """Build a :class:`CapabilityToken` from a JSON string.
+
+    Accepts either the JSON emitted by ``osa mint`` or a path to a file
+    containing that JSON. Keeps the auth surface ergonomic without
+    baking token persistence into the CLI.
+    """
+    if raw.startswith("{"):
+        payload = json.loads(raw)
+    else:
+        payload = json.loads(Path(raw).read_text(encoding="utf-8"))
+    return CapabilityToken(**payload)
+
+
+def cmd_list(_: argparse.Namespace) -> int:
+    registry = load_registry()
+    for name in sorted(registry):
+        script = registry[name]
+        print(f"tier-{script.tier}\t{name}\t{script.description}")
+    return 0
+
+
+def cmd_info(args: argparse.Namespace) -> int:
+    try:
+        registry = load_registry()
+        script = registry[args.name]
+    except KeyError:
+        sys.stderr.write(f"osa: unknown script {args.name!r}\n")
+        return 2
+    payload = {
+        "name": script.name,
+        "tier": script.tier,
+        "description": script.description,
+        "language": script.language,
+        "timeout_s": script.timeout_s,
+        "params": [dataclasses.asdict(p) for p in script.params],
+    }
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def cmd_mint(args: argparse.Namespace) -> int:
+    try:
+        secret = default_secret()
+        token = mint_token(args.name, secret=secret, ttl_s=args.ttl)
+    except MissingSecret as exc:
+        sys.stderr.write(f"osa: {exc}\n")
+        return 1
+    print(json.dumps(dataclasses.asdict(token), indent=2))
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    params = _parse_params(args.param or [])
+    token = _load_token(args.token) if args.token else None
+    provenance = ProvenanceType.HUMAN_TYPED if args.from_cli else ProvenanceType.LOCAL
+    try:
+        result: OsaResult = osa(
+            args.name,
+            params,
+            timeout_s=args.timeout,
+            provenance=provenance,
+            capability_token=token,
+        )
+    except ScriptNotRegistered as exc:
+        sys.stderr.write(f"osa: {exc}\n")
+        return 2
+    except ParamValidationError as exc:
+        sys.stderr.write(f"osa: {exc}\n")
+        return 2
+    except (MissingSecret, TokenInvalid, TokenExpired, TokenReused) as exc:
+        sys.stderr.write(f"osa: auth rejected — {exc}\n")
+        return 1
+    except OsaError as exc:
+        sys.stderr.write(f"osa: kernel failure — {exc}\n")
+        return 1
+    sys.stdout.write(result.stdout)
+    return 0 if result.ok else 1
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="osa", description="HAL osascript dispatch CLI"
+    )
+    sub = ap.add_subparsers(dest="command", required=True)
+
+    pl = sub.add_parser("list", help="List every registered script (name + tier)")
+    pl.set_defaults(func=cmd_list)
+
+    pi = sub.add_parser("info", help="Show a script's schema")
+    pi.add_argument("name", help="Script name from `osa list`")
+    pi.set_defaults(func=cmd_info)
+
+    pm = sub.add_parser("mint", help="Mint a capability token (prints JSON)")
+    pm.add_argument("name", help="Script name the token will authorise")
+    pm.add_argument(
+        "--ttl", type=int, default=60,
+        help="Seconds until expiry (default 60)",
+    )
+    pm.set_defaults(func=cmd_mint)
+
+    pr = sub.add_parser("run", help="Dispatch a script through osa()")
+    pr.add_argument("name", help="Script name from `osa list`")
+    pr.add_argument(
+        "--param", action="append",
+        help="key=value (repeatable) — value is NOT escaped here; "
+             "escaping happens inside osa() per script.language",
+    )
+    pr.add_argument(
+        "--token",
+        help="JSON payload from `osa mint`, or a path to a file containing it",
+    )
+    pr.add_argument(
+        "--timeout", type=int, default=None,
+        help="Override registry default (seconds)",
+    )
+    pr.add_argument(
+        "--from-cli", action="store_true",
+        help="Tag audit entry with provenance=human_typed instead of local",
+    )
+    pr.set_defaults(func=cmd_run)
+
+    return ap
+
+
+def main(argv: List[str] = None) -> int:
+    ap = _build_parser()
+    args = ap.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

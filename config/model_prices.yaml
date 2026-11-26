@@ -1,0 +1,206 @@
+# HAL list prices -- versioned, read by lib/hal/infinite_cost.py.
+#
+# InfiniteMachine v2, Step 4 (cost truth). A thread row records three figures
+# that are never merged: the usage the response reported, its LIST-price
+# equivalent from this table, and what was actually spent. This table only
+# answers the second question.
+#
+# Units: US dollars per million tokens, written as quoted decimal strings so no
+# binary float ever enters a price. A rate the vendor does not publish is null,
+# and a request that used it gets no list price (and a warning), never a guess.
+#
+# Rows:
+#   version            this model's price version, raised when a new row is added
+#   effective          the first UTC date the row prices; it is the day every
+#                      figure in the row was read from the vendor, because the
+#                      vendor's own start date for a price is not recorded
+#   input / output     fresh input and output tokens
+#   cache_read         cache hits (Anthropic "cache hits and refreshes")
+#   cache_write        cache writes at the default lifetime (Anthropic 5 minutes)
+#   cache_write_1h     Anthropic 1-hour cache writes
+#   max_prompt_tokens  optional: the largest prompt (fresh + cached + written
+#                      input) this row prices; a larger request bills at a tier
+#                      this table does not carry, so it gets no list price
+#   source             where every figure came from (HAL file:line, vendor page)
+#
+# Seeded on 2026-10-05 from the dated figures already in lib/hal/cost_tracker.py
+# and config/model_catalog.yaml. Left out on purpose, so they price as unknown:
+# rows whose vendor read date HAL never recorded; xAI (long prompts bill double
+# above a threshold HAL has not recorded); the Opus fast variants and Claude
+# Haiku 3.5 (not on the vendor's current page for the first-party API); and
+# models HAL has no figure for yet. Adding a price: append a row with the next
+# version and its own effective date, never edit a row that has priced traffic.
+#
+# The gpt-5.6 rows take cost_tracker.py's 2026-09-08 vendor read. The catalog's
+# descriptions quote other figures (model_catalog.yaml:332-333, 349, 365:
+# $5/$30, $2.50/$15, $1/$6) with no read date, so they are not used here.
+
+version: 1
+unit: USD per million tokens
+
+models:
+  # --- Anthropic: cost_tracker.py:32-46, and the vendor's table at
+  # --- platform.claude.com/docs/en/about-claude/pricing (read 2026-10-05), which
+  # --- confirms every figure and adds the 1-hour cache-write column.
+  claude-fable-5-2:
+    - {version: 1, effective: "2026-11-11", input: "8", output: "40", cache_read: "0.20", cache_write: "10", cache_write_1h: "16", source: "vendor pricing page read 2026-11-11: Claude Fable 5.2 | $8 / MTok | $10 / MTok | $16 / MTok | $0.20 / MTok | $40 / MTok"}
+  claude-fable-5-1:
+    - {version: 1, effective: "2026-10-05", input: "10", output: "50", cache_read: "0.25", cache_write: "12.50", cache_write_1h: "20", source: "cost_tracker.py:36; model_catalog.yaml:54; vendor pricing page read 2026-10-05"}
+  claude-fable-5:
+    - {version: 1, effective: "2026-10-05", input: "10", output: "50", cache_read: "1", cache_write: "12.50", cache_write_1h: "20", source: "cost_tracker.py:37; vendor pricing page read 2026-10-05"}
+  claude-opus-5-5:
+    - {version: 1, effective: "2026-10-05", input: "4", output: "20", cache_read: "0.20", cache_write: "5", cache_write_1h: "8", source: "cost_tracker.py:29-32; model_catalog.yaml:89; vendor pricing page read 2026-10-05"}
+  claude-opus-5:
+    - {version: 1, effective: "2026-10-05", input: "5", output: "25", cache_read: "0.50", cache_write: "6.25", cache_write_1h: "10", source: "cost_tracker.py:33; vendor pricing page read 2026-10-05"}
+  claude-opus-4-8:
+    - {version: 1, effective: "2026-10-05", input: "5", output: "25", cache_read: "0.50", cache_write: "6.25", cache_write_1h: "10", source: "cost_tracker.py:34; vendor pricing page read 2026-10-05"}
+  claude-opus-4-7:
+    - {version: 1, effective: "2026-10-05", input: "5", output: "25", cache_read: "0.50", cache_write: "6.25", cache_write_1h: "10", source: "cost_tracker.py:39; vendor pricing page read 2026-10-05"}
+  claude-opus-4-6:
+    - {version: 1, effective: "2026-10-05", input: "5", output: "25", cache_read: "0.50", cache_write: "6.25", cache_write_1h: "10", source: "cost_tracker.py:41; vendor pricing page read 2026-10-05"}
+  claude-opus-4-5:
+    - {version: 1, effective: "2026-10-05", input: "5", output: "25", cache_read: "0.50", cache_write: "6.25", cache_write_1h: "10", source: "cost_tracker.py:43; vendor pricing page read 2026-10-05"}
+  claude-sonnet-5:
+    - {version: 1, effective: "2026-10-05", input: "2", output: "10", cache_read: "0.20", cache_write: "2.50", cache_write_1h: "4", source: "cost_tracker.py:35; vendor pricing page read 2026-10-05 (footnote 3: $2/$10 is the standard price)"}
+  claude-sonnet-5-5:
+    - {version: 1, effective: "2026-10-12", input: "2", output: "10", cache_read: "0.10", cache_write: "2.50", cache_write_1h: "4", source: "vendor pricing page platform.claude.com/docs/en/about-claude/pricing read 2026-10-12 (footnote 2: cache hits on Opus 5.5 and Sonnet 5.5 are 0.05x the base input price)"}
+  claude-sonnet-4-6:
+    - {version: 1, effective: "2026-10-05", input: "3", output: "15", cache_read: "0.30", cache_write: "3.75", cache_write_1h: "6", source: "cost_tracker.py:44; vendor pricing page read 2026-10-05"}
+  claude-sonnet-4-5:
+    - {version: 1, effective: "2026-10-05", input: "3", output: "15", cache_read: "0.30", cache_write: "3.75", cache_write_1h: "6", source: "cost_tracker.py:45; vendor pricing page read 2026-10-05"}
+  claude-haiku-4-5:
+    - {version: 1, effective: "2026-10-05", input: "1", output: "5", cache_read: "0.10", cache_write: "1.25", cache_write_1h: "2", source: "cost_tracker.py:46; vendor pricing page read 2026-10-05"}
+  claude-haiku-5-5:
+    # Priced by prompt length. This row carries the tier for prompts up to 100,000
+    # tokens. The vendor bills prompts over that at input "0.50", output "2.50",
+    # cache_read "0.05", cache_write "0.625", cache_write_1h "1": this table holds
+    # one row per model and date, so such a request prices as unknown here
+    # (max_prompt_tokens), while lib/hal/cost_tracker.py _REQUEST_TIERS carries the
+    # tier's four rates (cost_tracker has no 1-hour column for any model). A test
+    # holds the two cutoffs equal.
+    - {version: 1, effective: "2026-10-09", input: "0.10", output: "0.50", cache_read: "0.01", cache_write: "0.125", cache_write_1h: "0.20", max_prompt_tokens: 100000, source: "vendor pricing page platform.claude.com/docs/en/about-claude/pricing read 2026-10-09"}
+
+  # --- OpenAI: cost_tracker.py:54-76, platform.openai.com/docs/pricing, Standard
+  # --- tier. GPT-6 and GPT-5.6 rows hold for prompts up to 272K tokens only.
+  gpt-6.2-astra:
+    - {version: 1, effective: "2026-11-24", input: "8", output: "40", cache_read: "0.40", cache_write: "10", cache_write_1h: null, max_prompt_tokens: 272000, source: "developers.openai.com/api/docs/models/gpt-6.2-astra + .../pricing, read 2026-11-24. 12-hour cache write is $20 (not modelled: cache_write_1h is Anthropic's 1-hour slot, OpenAI has no 1h window; the 12h figure is documented here, not in a field). Above 272K: input $16, cached $0.80, output $60"}
+  gpt-6.2-sol:
+    - {version: 1, effective: "2026-11-24", input: "2", output: "10", cache_read: "0.10", cache_write: "2.50", cache_write_1h: null, max_prompt_tokens: 272000, source: "developers.openai.com/api/docs/models/gpt-6.2-sol + .../pricing, read 2026-11-24. 12-hour cache write is $5 (same cache_write_1h caveat as Astra above). Above 272K: input $4, cached $0.20, output $15"}
+  gpt-6-astra:
+    - {version: 1, effective: "2026-09-08", input: "10", output: "50", cache_read: "1", cache_write: "12.50", cache_write_1h: null, max_prompt_tokens: 272000, source: "cost_tracker.py:54-58; model_catalog.yaml:305-307"}
+  gpt-5.6-sol:
+    - {version: 1, effective: "2026-09-08", input: "4", output: "20", cache_read: "0.40", cache_write: "5", cache_write_1h: null, max_prompt_tokens: 272000, source: "cost_tracker.py:54-59"}
+  gpt-5.6-terra:
+    - {version: 1, effective: "2026-09-08", input: "2", output: "12", cache_read: "0.20", cache_write: "2.50", cache_write_1h: null, max_prompt_tokens: 272000, source: "cost_tracker.py:54-60"}
+  gpt-5.6-luna:
+    - {version: 1, effective: "2026-09-08", input: "0.20", output: "1.20", cache_read: "0.02", cache_write: "0.25", cache_write_1h: null, max_prompt_tokens: 272000, source: "cost_tracker.py:54-61"}
+  gpt-5.5:
+    - {version: 1, effective: "2026-09-09", input: "5", output: "30", cache_read: "0.50", cache_write: "5", cache_write_1h: null, source: "cost_tracker.py:62-74 (a cache write bills at the input rate: not an additive fee)"}
+  gpt-5.4-mini:
+    - {version: 1, effective: "2026-09-09", input: "0.75", output: "4.50", cache_read: "0.075", cache_write: "0.75", cache_write_1h: null, source: "cost_tracker.py:62-75"}
+  gpt-5.4:
+    - {version: 1, effective: "2026-09-09", input: "2.50", output: "15", cache_read: "0.25", cache_write: "2.50", cache_write_1h: null, source: "cost_tracker.py:62-76"}
+
+  # --- Gemini: cost_tracker.py:82-97, ai.google.dev/gemini-api/docs/pricing,
+  # --- paid tier, read 2026-10-01; output includes thinking. A context cache
+  # --- bills storage per hour, which no per-token rate carries: cache_write null.
+  # --- Pro models bill more above 200K prompt tokens (cost_tracker.py:181-183).
+  gemini-3.1-pro:
+    - {version: 1, effective: "2026-10-01", input: "2", output: "12", cache_read: "0.20", cache_write: null, cache_write_1h: null, max_prompt_tokens: 200000, source: "cost_tracker.py:82-91, 181-183"}
+  gemini-4-argon:
+    - {version: 1, effective: "2026-10-13", input: "2", output: "10", cache_read: "0.10", cache_write: null, cache_write_1h: null, source: "ai.google.dev/gemini-api/docs/pricing read 2026-10-18: '$2.00 through November 30, 2026.' in, '$10.00 through November 30, 2026.' out, '$0.10' cached; GA 2026-10-13 per the changelog; the doubling from 2026-12-01 is cost_tracker.py _PRICE_SCHEDULE until that day, when this ledger gains its row"}
+  gemini-4-carbon:
+    - {version: 1, effective: "2026-11-10", input: "2", output: "10", cache_read: "0.10", cache_write: null, cache_write_1h: null, source: "aistudio.google.com/docs/pricing read 2026-11-24: '$2.00 through November 30, 2026.' in, '$10.00 through November 30, 2026.' out, '$0.10 through November 30, 2026.' cached; GA 2026-11-10 per the changelog (announced 2026-10-28, restricted access); the doubling from 2026-12-01 is cost_tracker.py _PRICE_SCHEDULE until that day, when this ledger gains its row"}
+  gemini-4-hydrogen:
+    - {version: 1, effective: "2026-11-12", input: "1.50", output: "7.50", cache_read: "0.075", cache_write: null, cache_write_1h: null, source: "aistudio.google.com/docs/pricing read 2026-11-24: '$1.50' in, '$7.50' out, '$0.075' cached, flat; GA 2026-11-12 per the changelog; no dated change on this page"}
+  gemini-3.6-flash:
+    - {version: 1, effective: "2026-10-18", input: "0.75", output: "3.75", cache_read: "0.075", cache_write: null, cache_write_1h: null, source: "ai.google.dev/gemini-api/docs/pricing read 2026-10-18: '$0.75 through December 31, 2026.' in, '$3.75' out, '$0.075' cached; the doubling from 2027-01-01 is cost_tracker.py _PRICE_SCHEDULE until that day"}
+  gemini-3.8-flash:
+    - {version: 1, effective: "2026-10-18", input: "0.75", output: "3.75", cache_read: "0.075", cache_write: null, cache_write_1h: null, source: "ai.google.dev/gemini-api/docs/pricing read 2026-10-18: the same row as gemini-3.6-flash; the doubling from 2027-01-01 is cost_tracker.py _PRICE_SCHEDULE until that day"}
+  gemini-3.5-flash-lite:
+    - {version: 1, effective: "2026-10-01", input: "0.30", output: "2.50", cache_read: "0.03", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:82-92"}
+  gemini-3.5-flash:
+    - {version: 1, effective: "2026-10-01", input: "1.50", output: "9", cache_read: "0.15", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:82-93"}
+  gemini-3.1-flash-lite:
+    - {version: 1, effective: "2026-10-01", input: "0.25", output: "1.50", cache_read: "0.025", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:82-94"}
+  gemini-2.5-pro:
+    - {version: 1, effective: "2026-10-01", input: "1.25", output: "10", cache_read: "0.125", cache_write: null, cache_write_1h: null, max_prompt_tokens: 200000, source: "cost_tracker.py:82-95 (Pro models bill more above 200K)"}
+  gemini-2.5-flash-lite:
+    - {version: 1, effective: "2026-10-01", input: "0.10", output: "0.40", cache_read: "0.01", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:82-96"}
+  gemini-2.5-flash:
+    - {version: 1, effective: "2026-10-01", input: "0.30", output: "2.50", cache_read: "0.03", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:82-97"}
+
+  # --- DeepSeek: cost_tracker.py:98-108, api-docs.deepseek.com/quick_start/pricing,
+  # --- read 2026-10-01. The PEAK rate is the list price; off-peak is half and is
+  # --- not applied here. No cache-write rate is published: null.
+  deepseek-flash:
+    - {version: 1, effective: "2026-10-01", input: "0.30", output: "1.20", cache_read: "0.006", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:98-106"}
+  deepseek-v4-flash:
+    - {version: 1, effective: "2026-10-01", input: "0.30", output: "1.20", cache_read: "0.006", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:98-107 (legacy name, billed at the Flash price)"}
+  deepseek-v4-pro:
+    - {version: 1, effective: "2026-10-01", input: "1.32", output: "3.96", cache_read: "0.044", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:98-108"}
+
+  # --- Qwen (DashScope, International): cost_tracker.py:118-128, read
+  # --- 2026-10-01. No cache rate is published: both cache columns null.
+  qwen3.5-flash:
+    - {version: 1, effective: "2026-10-01", input: "0.10", output: "0.40", cache_read: null, cache_write: null, cache_write_1h: null, source: "cost_tracker.py:118-122"}
+  qwen3.8-max:
+    - {version: 1, effective: "2026-10-01", input: "2", output: "6", cache_read: null, cache_write: null, cache_write_1h: null, source: "cost_tracker.py:123-127"}
+  qwen3.7-flash:
+    - {version: 1, effective: "2026-10-01", input: "0.03", output: "0.13", cache_read: null, cache_write: null, cache_write_1h: null, max_prompt_tokens: 32000, source: "cost_tracker.py:123-128, 176-180 (first tier, up to 32K tokens)"}
+  # --- qwen4-max + qwen3.8-flash: alibabacloud.com/help/en/model-studio/
+  # --- qwen4-max, .../billing-for-model-studio and press-room/
+  # --- alibaba-unveils-qwen4-max, all read 2026-11-24. qwen4-max publishes an
+  # --- implicit-cache-hit rate ($0.075); qwen3.8-flash does not.
+  qwen4-max:
+    - {version: 1, effective: "2026-11-24", input: "1.5", output: "4.5", cache_read: "0.075", cache_write: null, cache_write_1h: null, source: "cost_tracker.py (qwen4-max)"}
+  qwen3.8-flash:
+    - {version: 1, effective: "2026-11-24", input: "0.15", output: "0.47", cache_read: null, cache_write: null, cache_write_1h: null, source: "cost_tracker.py (qwen3.8-flash)"}
+
+  # --- Moonshot (Kimi): cost_tracker.py:131-139, platform.kimi.ai/docs/pricing,
+  # --- re-verified 2026-09-07. No distinct cache-write rate is published: null.
+  kimi-k2.6:
+    - {version: 1, effective: "2026-09-07", input: "0.95", output: "4", cache_read: "0.16", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:131-136; model_catalog.yaml:636"}
+  kimi-k2.7-code:
+    - {version: 1, effective: "2026-09-07", input: "0.95", output: "4", cache_read: "0.19", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:131-137; model_catalog.yaml:541"}
+  kimi-k2.7-code-highspeed:
+    - {version: 1, effective: "2026-09-07", input: "1.90", output: "8", cache_read: "0.38", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:131-138; model_catalog.yaml:555-556"}
+  kimi-k3:
+    - {version: 1, effective: "2026-09-07", input: "3", output: "15", cache_read: "0.30", cache_write: null, cache_write_1h: null, source: "cost_tracker.py:131-139; model_catalog.yaml:462"}
+  # --- Kimi K3.1 (2026-11-24): the vendor table now publishes 5-minute and 1-hour
+  # --- cache-write rates for the K3 series (platform.kimi.ai/docs/pricing/chat).
+  kimi-k3.1-pro:
+    - {version: 1, effective: "2026-11-24", input: "2", output: "10", cache_read: "0.20", cache_write: "2", cache_write_1h: "4", source: "platform.kimi.ai/docs/pricing/chat (embedded table, read 2026-11-24); cost_tracker.py"}
+  kimi-k3.1-pro-highspeed:
+    - {version: 1, effective: "2026-11-24", input: "4", output: "20", cache_read: "0.20", cache_write: "4", cache_write_1h: "8", source: "platform.kimi.ai/docs/pricing/chat (embedded table, read 2026-11-24); cost_tracker.py"}
+
+  # --- Zhipu (GLM-5.3 and GLM-5.3-Flash, 2026-11-24): docs.z.ai/guides/overview/
+  # --- pricing.md. No cache-write rate is published for either -- the "Cached Input
+  # --- Storage" column is a free promotional storage rate, not a write premium, so
+  # --- both write columns are null. GLM-5.3 is now the id GRIP#9431 repoints the
+  # --- Zhipu bridge defaults to (Zhipu answers every glm-5.1 request with it).
+  # --- GLM-5.4 is left OUT on purpose: its Model API is "pending completion of the
+  # --- security assessment" and it has no published per-token price (this file's own
+  # --- header convention: an absent row prices as unknown, never a guess).
+  glm-5.3:
+    - {version: 1, effective: "2026-11-24", input: "1.4", output: "4.4", cache_read: "0.26", cache_write: null, cache_write_1h: null, source: "docs.z.ai/guides/overview/pricing.md (read 2026-11-24): GLM-5.3 | $1.4 | $0.26 | Limited-time Free | $4.4; cost_tracker.py"}
+
+  glm-5.3-flash:
+    - {version: 1, effective: "2026-11-24", input: "0.15", output: "0.50", cache_read: "0.03", cache_write: null, cache_write_1h: null, source: "docs.z.ai/guides/overview/pricing.md (read 2026-11-24): GLM-5.3-Flash | $0.15 | $0.03 | Limited-time Free | $0.50; cost_tracker.py"}
+
+  # --- Mistral (GRIP#9420, 2026-11-24): docs.mistral.ai/inference/pricing's
+  # --- embedded pricing data, re-read live. mistral-large-4 and
+  # --- mistral-small-2603 pre-date this PR (AGORA on HAL#837: backfilled here
+  # --- rather than left missing, since this file's own convention is that an
+  # --- absent row prices as unknown, and both ids' read dates ARE known --
+  # --- the same page, the same day, as their "-latest" siblings below).
+  # --- cache_write_1h is Anthropic's 1-hour slot; Mistral publishes no such
+  # --- column for any row below, so it is null throughout.
+  mistral-large-4:
+    - {version: 1, effective: "2026-11-24", input: "0.70", output: "2.10", cache_read: "0.07", cache_write: "0.70", cache_write_1h: null, source: "docs.mistral.ai/inference/pricing embedded data, read 2026-11-24: the 'mistral-large-4' card -- $0.70 input, $0.07 cached input, $2.10 output per million tokens"}
+  mistral-large-latest:
+    - {version: 1, effective: "2026-11-24", input: "0.70", output: "2.10", cache_read: "0.07", cache_write: "0.70", cache_write_1h: null, source: "docs.mistral.ai/inference/pricing embedded data, read 2026-11-24: shares mistral-large-4's card (modelIds mistral-large-4 / mistral-large-4-0 / mistral-large-latest) -- $0.70 input, $0.07 cached input, $2.10 output per million tokens"}
+  mistral-small-2603:
+    - {version: 1, effective: "2026-11-24", input: "0.15", output: "0.60", cache_read: "0.15", cache_write: "0.15", cache_write_1h: null, source: "docs.mistral.ai/inference/pricing embedded data, read 2026-11-24: the 'mistral-small-2603' card -- $0.15 input, $0.60 output, no cached-input row published, so both cache slots carry the input rate as an upper bound"}
+  mistral-small-latest:
+    - {version: 1, effective: "2026-11-24", input: "0.15", output: "0.60", cache_read: "0.15", cache_write: "0.15", cache_write_1h: null, source: "docs.mistral.ai/inference/pricing embedded data, read 2026-11-24: shares mistral-small-2603's card (modelIds mistral-small-2603 / mistral-small-latest) -- $0.15 input, $0.60 output, no cached-input row published, so both cache slots carry the input rate as an upper bound"}

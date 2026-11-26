@@ -1,0 +1,25 @@
+name: Stranger check
+
+# A stranger clones public HAL anonymously, runs the install and test lines its
+# README prints, and reports what failed. The check lives in public GRIP
+# (.github/workflows/stranger.yml and lib/stranger_check.py); this file only
+# calls it, so there is one copy of the check.
+#
+# The job is guarded to the public grip-platform organisation, where
+# GitHub-hosted runners are free for public repositories. In any other
+# organisation it is skipped and uses no runner.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stranger:
+    if: github.repository_owner == 'grip-platform'
+    uses: grip-platform/GRIP/.github/workflows/stranger.yml@main
+    with:
+      targets: '["hal"]'

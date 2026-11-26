@@ -1,0 +1,32 @@
+HAL — Harness Abstraction Layer
+Copyright (C) 2024-2026 Lourens Cornelius Scheepers / CodeTonight (Pty) Ltd
+
+This product is licensed under the GNU Affero General Public License,
+version 3 only (AGPL-3.0-only). See the LICENSE file for the full text.
+Commercial licences (for use outside the AGPL's terms) are available via
+licensing@codetonight.co.za.
+
+Third-party and vendored material
+----------------------------------
+
+HAL's KONO memory substrate (lib/hal/kono/) is a vendored, standalone
+simplification of the equivalent module in CodeTonight's own GRIP project
+(https://github.com/grip-platform/GRIP), under the same copyright holder
+and the same licence (AGPL-3.0-only). This is not third-party code; it is
+noted here for provenance only.
+
+A small number of files (lib/hal/tool_dispatch.py, parts of
+lib/hal/cost_tracker.py, and parts of lib/hal/memory_engine.py) carry
+in-code comments attributing design or data to a project referred to in
+those comments as "TF++". That material is credited to Thomas Frumkin.
+CodeTonight's operator confirmed on 2026-11-22 that it may ship as part
+of this open-source release with that credit. No other licence terms for
+this material are stated or implied beyond that confirmation. Questions
+about this attribution can be sent to licensing@codetonight.co.za.
+
+No other third-party source code is vendored into this repository as of
+the date of this release candidate. Third-party LLM provider APIs, models
+and services that HAL connects to at runtime (Anthropic, OpenAI, Google,
+Groq, xAI, DeepSeek, Alibaba/DashScope, Mistral, and others) are accessed
+over their own published interfaces under their own terms, are not
+distributed with this software, and are not covered by this NOTICE.

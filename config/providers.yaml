@@ -1,0 +1,290 @@
+# HAL Provider Configuration
+# provider/model-name addressing convention (LiteLLM-inspired)
+# Edit this file to add, remove, or configure LLM providers.
+
+providers:
+  - name: groq
+    type: cloud
+    base_url: https://api.groq.com/openai/v1
+    api_key_source: keychain:grip-groq
+    # Refreshed 2026-08-30 against GET /v1/models (key verified live):
+    # llama-3.3-70b-versatile, llama-4-scout-17b-16e-instruct and
+    # deepseek-r1-distill-llama-70b are RETIRED upstream (decommissioned —
+    # llama-3.3 returns 404 model_not_found). gpt-oss-120b/20b and
+    # qwen3.8-27b are the current chat models; whisper for audio.
+    # qwen3.6-27b left /v1/models by 2026-11-24 (GRIP's bin/grip-model-watch)
+    # and a chat call to it answers 404 model_not_found, as a nonsense id does.
+    models: [openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b, whisper-large-v3-turbo]
+    default: true
+    # tool_unfriendly_models: REMOVED 2026-08-30 — both referenced models
+    # (llama-3.3-70b-versatile, llama-4-scout) retired at Groq, and no
+    # replacement pair has been re-verified. The consumer
+    # (lib/hal/cli.py::_load_tool_unfriendly_from_yaml) reads absence as
+    # "no hints" — documented, not silent. Re-add with a live-verified pair.
+
+  - name: gemini
+    type: cloud
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai
+    api_key_source: keychain:grip-gemini
+    # gemma-4-27b retired upstream (2026-08-30 live /models: no such id);
+    # the Gemma 4 line is 26b-a4b-it and 31b-it. gemini-3.5-flash is the
+    # current flash generation (live list).
+    models: [gemini-3.1-pro-preview, gemma-4-31b-it, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-4-argon, gemini-3.6-flash, gemini-3.8-flash, gemini-4-carbon, gemini-4-hydrogen]
+    # gemini-3.5-flash deprecated 2026-10-08 (requests routed to gemini-3.6-flash); kept
+    # while accepted. gemini-3.6-flash and gemini-3.8-flash: Stable, served 2026-10-18.
+    # gemini-4-argon (GA 2026-10-13) LAST on purpose: position is behaviour for a
+    # one-word qualifier (tests/test_gemini_catalogue_parity.py).
+    # SUNSET 2026-11-24 (GRIP#9389): gemini-2.5-flash removed — every HAL caller
+    # that named it now names gemini-3.5-flash-lite, which
+    # ai.google.dev/gemini-api/docs/deprecations (read 2026-11-24) says Google
+    # auto-routes gemini-2.5-flash requests to, effective 2026-12-01, billed at
+    # Gemini 3.5 Flash-Lite rates. Inserted here (not appended) so the existing
+    # onboarding-order tail (argon, 3.6-flash, 3.8-flash) is undisturbed.
+    # lib/hal/cost_tracker.py keeps the old gemini-2.5-flash price row —
+    # history already billed under it is still billed correctly.
+    # gemini-4-carbon and gemini-4-hydrogen added 2026-11-24 (dogfood-domain
+    # phase 2 family 6): gemini-4-carbon GA 2026-11-10, gemini-4-hydrogen GA
+    # 2026-11-12 (aistudio.google.com/docs/changelog). Appended LAST, after
+    # gemini-3.8-flash, so no earlier qualifier moves: `--gemini 4` still
+    # names gemini-4-argon (position is behaviour;
+    # tests/test_gemini_catalogue_parity.py). `--gemini carbon` and
+    # `--gemini hydrogen` name the new ids.
+
+  - name: qwen
+    type: cloud
+    base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+    api_key_source: keychain:hal-dashscope
+    # qwen3.6-plus-preview retired (2026-08-30 live /models: replaced by
+    # qwen3.6-plus). qwen3.8-* is the current generation.
+    models: [qwen3.5-flash, qwen3.5-plus, qwen3.6-plus, qwen3.8-flash, qwen3.8-max, qwen4-max]
+    # qwen4-max added 2026-11-24 (dogfood-domain phase 2 family 4), GA
+    # 2026-11-16. This provider has no qualifier-resolution feature, so
+    # appending is cosmetic consistency, not a collision guard.
+
+  - name: qwen-token-plan
+    type: cloud
+    base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+    api_key_source: keychain:grip-qwen-token-plan
+    # Alibaba Model Studio Token Plan Personal Edition (subscription, flat-fee
+    # credits). Serves a cross-vendor catalogue on BOTH the OpenAI-compatible
+    # wire (this base_url) and the Anthropic-compatible wire
+    # (.../apps/anthropic/v1). Live /models 2026-10-02. The API key is
+    # OBSCURED by the bailian installer (o1_ prefix, Feistel+CRC32); the
+    # decoded key is what keychain holds. deepseek-v4-flash (bare id) is
+    # AccessDenied.Unpurchased — use deepseek-v4-flash-0731 instead.
+    models: [qwen4-max, qwen3.8-max, qwen3.8-flash, qwen3.7-max, qwen3.7-plus, qwen3.6-flash,
+             deepseek-v4-pro, deepseek-v4-flash-0731, deepseek-v4.1-flash,
+             glm-5.3, glm-5.2]
+    # qwen4-max listed FIRST, 2026-11-24 -- the vendor's own Token Plan page
+    # lists it first too (alibabacloud.com/help/en/model-studio/
+    # token-plan-personal-overview, read 2026-11-24). qwen4-max-preview is
+    # deliberately excluded: its preview window closes 2026-11-25 10:00 UTC+8.
+
+  - name: deepseek
+    type: cloud
+    base_url: https://api.deepseek.com/v1
+    api_key_source: keychain:hal-deepseek
+    # 2026-10-26: the API serves exactly {deepseek-flash, deepseek-v4-pro} — the
+    # upstream 400 for legacy ids names: deepseek-flash, deepseek-v4-pro.
+    # deepseek-v4-flash and deepseek-v4-flash-vision-exp are retired-but-aliased
+    # (renamed to deepseek-flash, now text+vision); deepseek-chat / deepseek-reasoner
+    # / deepseek-v3.2 are RETIRED.
+    models: [deepseek-flash, deepseek-v4-pro]
+
+  - name: moonshot
+    type: cloud
+    base_url: https://api.moonshot.ai/v1
+    api_key_source: keychain:grip-moonshot
+    # Kimi lineage added 2026-07-26 (live on GET /v1/models; issue #509 item 1).
+    # kimi-k2.5 and moonshot-v1* retired 2026-08-31 (platform.kimi.ai/docs/models.md);
+    # the API now returns 404 for them. Exactly these four ids were served by
+    # GET /v1/models on 2026-09-07 (tests/test_moonshot_endpoint.py liveness anchor).
+    # kimi-k3.1-pro and -highspeed joined on 2026-11-24 (served and probed 200 that
+    # day), LAST so no qualifier that named an older id moves (GRIP's resolver takes
+    # the first id carrying a token, and these carry k3 and highspeed).
+    models: [kimi-k3, kimi-k2.6, kimi-k2.7-code, kimi-k2.7-code-highspeed, kimi-k3.1-pro, kimi-k3.1-pro-highspeed]
+
+  - name: kimi-coding
+    type: cloud
+    # Kimi Code -- Moonshot's Kimi MEMBERSHIP coding service, GRIP Pool D
+    # (sovereign-council seal e49c00c214c500be, 2026-09-07). A SEPARATE product
+    # from the pay-per-token `moonshot` block: "the Kimi Code API is independent
+    # from the API service on this platform" (platform.kimi.ai product-plans).
+    # Same credential name as the GRIP side
+    # (lib/provider_secret.resolve_provider_key("kimi-coding"), GRIP#5336).
+    # Anthropic-compatible base for the SAME key: https://api.kimi.com/coding/
+    # -- what a Claude Code launch sets as ANTHROPIC_BASE_URL, with the key in
+    # ANTHROPIC_API_KEY (not ANTHROPIC_AUTH_TOKEN). Billed as a membership
+    # quota, not per token: "refreshes automatically every 7 days ... a rolling
+    # 5-hour rate window ... Requests from the CLI, VS Code, and third-party
+    # tools all count toward that quota". UNARMED until keychain
+    # grip-kimi-coding exists. A 401 can mean "the requested capability exceeds
+    # your plan's entitlements", not a bad key.
+    base_url: https://api.kimi.com/coding/v1
+    api_key_source: keychain:grip-kimi-coding
+    # Exactly the four ids in the vendor's model table. "Entering a model
+    # version name like Kimi K3 or K2.7 Code will cause the call to fail."
+    models: [k3, k3-256k, kimi-for-coding, kimi-for-coding-highspeed]
+
+  - name: zhipu
+    type: cloud
+    base_url: https://api.z.ai/api/coding/paas/v4
+    api_key_source: keychain:grip-zhipu
+    # glm-5.4 joined 2026-11-24 (docs.z.ai/guides/llm/glm-5.4.md, read 2026-11-24), LAST
+    # so no one-token qualifier that names an older id moves: it carries "4" (glm-4.7
+    # keeps `--glm 4`) and "5" (glm-5.1 keeps `--glm 5`). glm-5.3-flash was already
+    # listed here with no catalogue or cost row; both are filled in this change.
+    models: [glm-5.1, glm-5-turbo, glm-5, glm-5.3, glm-5.3-flash, glm-4.7, glm-4.6, glm-4.5, glm-4.5-air, glm-5.4]
+
+  - name: mistral
+    type: cloud
+    base_url: https://api.mistral.ai/v1
+    api_key_source: keychain:grip-mistral
+    models: [mistral-small-latest, mistral-small-2603, mistral-large-latest, mistral-large-4]
+    # mistral-small-2603 and mistral-large-4 added 2026-11-24 (/dogfood-domain,
+    # Phase 2 family 7), matching GRIP's config/model_catalog.yaml. See that
+    # repo's providers.yaml for the full sourcing note (docs.mistral.ai/inference/
+    # pricing, read 2026-11-24). Not GRIP's flagship pin for the family.
+
+  - name: openrouter
+    type: cloud
+    base_url: https://openrouter.ai/api/v1
+    api_key_source: keychain:grip-openrouter
+    models: [openai/gpt-5.6-sol, openai/gpt-5.6-terra, openai/gpt-5.6-luna, google/gemma-4-31b-it, google/gemma-4-26b-a4b-it, meta-llama/llama-4-maverick]
+
+  - name: openai
+    type: cloud
+    base_url: https://api.openai.com/v1
+    api_key_source: keychain:hal-openai
+    models: [gpt-6.2-astra, gpt-6.2-sol, gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-4o, gpt-4o-mini, o3-mini]
+    # gpt-6.2-astra and gpt-6.2-sol added 2026-11-24: launched 2026-11-17
+    # (dogfood-domain family 8). developers.openai.com/api/docs/models/
+    # gpt-6.2-astra (and -sol), read 2026-11-24: 1.05M context (922K max
+    # input), 128K max output, Responses AND Chat Completions both supported,
+    # reasoning effort none refused. Pricing (<=272K input) Astra $8/$0.40
+    # cached/$40 out, Sol $2/$0.10 cached/$10 out per 1M, both doubling
+    # input/cache and 1.5x output above 272K. Address-only, same as Astra
+    # below: no routing default, chain member or council seat (V>>'s decision
+    # 6, 2026-11-24 HITL round 1).
+    #
+    # gpt-6-astra added 2026-09-08: released 2026-09-03. Verified serving, not
+    # merely addressable: this org's GET /v1/models (125 ids, still the only
+    # gpt-6* id, no dated snapshot, no -pro id) plus HTTP 200 on both wires --
+    # chat/completions 1.82s, responses 2.16s. Address-only: never a routing
+    # default, chain member or council seat ($10/$50 per 1M, 2.5x Sol) -- that
+    # is a price decision, not a gap in the evidence. Liveness anchor:
+    # tests/test_gpt6_astra_liveness.py (opt-in, OPENAI_LIVE=1).
+
+  - name: soruxgpt
+    type: cloud
+    base_url: https://service.soruxgpt.com/api/api
+    api_key_source: keychain:grip-soruxgpt
+    # UNVERIFIED 2026-08-30: the listed base path 404s for every model below
+    # (relay panel has moved endpoints — /v1/models serves an SPA). Re-probe
+    # against soruxgpt docs before relying on this provider.
+    models: [gpt-4o, gpt-4o-mini, claude-3-5-sonnet-20241022, deepseek-chat, gemini-2.0-flash-exp]
+
+  - name: vulavula
+    type: cloud
+    base_url: https://api.lelapa.ai/v1
+    api_key_source: keychain:grip-vulavula
+    models: [translate, transcribe, sentiment]
+    custom_adapter: vulavula
+
+  - name: xai
+    type: cloud
+    base_url: https://api.x.ai/v1
+    api_key_source: keychain:hal-xai
+    # ids re-read from a LIVE GET /v1/models on 2026-09-15 (12 ids returned).
+    # The previous list was five-sixths stale: grok-3, grok-3-mini,
+    # grok-4-0709, grok-4-fast-non-reasoning and grok-code-fast-1 are no longer
+    # served, so any rung naming one 404s. Only grok-4.6 survived the re-probe.
+    # grok-4.20-0309-reasoning is the frontier reasoning variant (1M ctx).
+    # 2026-11-24: grok-build-0.1 answers 404 and is removed. xAI still answers
+    # the retired grok-3 family with HTTP 200, but the reply's model field is
+    # grok-4.3, so those names are aliases, not models.
+    # 2026-11-24 (dogfood-domain family 5): grok-4.7 joins, appended LAST as the
+    # newest id (docs.x.ai/developers/release-notes, read 2026-11-24: released
+    # 2026-09-21, 500K context, $2/$0.50/$6 per 1M tokens under 200K prompt
+    # tokens and $4/$1/$12 above). grok-4.20-0309-reasoning and
+    # grok-4.20-0309-non-reasoning were already listed here but had no price row
+    # until this change (see lib/hal/cost_tracker.py) -- a latent gap, since
+    # grok-4.20-0309-reasoning already sat in this file's own `premium` tier
+    # chain below, unpriced.
+    models: [grok-4.20-0309-reasoning, grok-4.20-0309-non-reasoning, grok-4.20-multi-agent-0309, grok-4.6, grok-4.5, grok-4.3, grok-4.7]
+
+
+  - name: lemonade
+    type: local
+    base_url: http://localhost:7860/v1
+    detect: true
+    models: auto
+
+  - name: ollama
+    type: local
+    base_url: http://localhost:11434/v1
+    detect: true
+    # auto-discovers all pulled models
+    # VPS primary: qwen2.5:3b (council-mandated CPU fallback tier, ~2GB, <1s first-token on Hetzner CPX62)
+    # Mac primary: gemma4:26b (MoE 128/9 experts, 4B effective, 256K ctx, multimodal)
+    # Install (VPS): ollama pull qwen2.5:3b
+    # Install (Mac): ollama pull gemma4:26b
+    models: auto
+
+  - name: vllm
+    type: local
+    base_url: http://localhost:8000/v1
+    detect: true
+    models: auto
+
+  - name: lmstudio
+    type: local
+    base_url: http://localhost:1234/v1
+    detect: true
+    models: auto
+
+  - name: mlx_vlm
+    type: local
+    base_url: http://localhost:8080/v1
+    auth: none
+    detect: true
+    models: auto
+    timeout_s: 180
+    # mlx-vlm v0.4.3: vision, audio, OCR, object detection, segmentation
+    # Models: Gemma4, Qwen2/3-VL, Phi-4-Vision, Falcon-OCR, Granite-Vision, SAM 3.1, RF-DETR
+    # Start: uv pip install -U mlx-vlm && python -m mlx_vlm.server --port 8080
+
+  - name: bitnet
+    type: local
+    base_url: http://127.0.0.1:8114/v1
+    auth: none
+    models: [bitnet-b1.58-2b4t]
+    # Microsoft BitNet b1.58-2B-4T (1.58-bit ternary, ~2.4B params, CPU-only),
+    # served by BitNet's own llama-server. Keyless localhost. GGUF:
+    # ~/CodeTonight/vendor/BitNet/models/BitNet-b1.58-2B-4T/ggml-model-i2_s.gguf
+    # Start: build/bin/llama-server -m <gguf> --host 127.0.0.1 --port 8114 -c 2048
+
+routing:
+  default: fallback
+  # 2026-08-30: llama-3.3-70b-versatile retired at Groq — the old default no
+  # longer answers. gpt-oss-120b keeps the same Groq-fast/free-tier shape.
+  default_model: groq/openai/gpt-oss-120b
+  # Ordering rationale: speed (Groq infra) → reliability (Google 1M-ctx, separate failure domain)
+  #   → frontier (xAI Grok, paid) → cost (OpenRouter pass-through, Qwen) → quality-cost (DeepSeek) → local fallback (Ollama)
+  fallback_chain: [groq/openai/gpt-oss-120b, gemini/gemini-3.5-flash-lite, xai/grok-4.6, openrouter/google/gemma-4-31b-it, qwen/qwen3.5-flash, deepseek/deepseek-flash, ollama/gemma4:26b]
+  quality_cost:
+    simple: groq/openai/gpt-oss-120b
+    standard: openrouter/google/gemma-4-31b-it
+    complex: gemini/gemini-3.1-pro-preview
+    local: ollama/gemma4:26b
+
+  # Tier-scoped fallback chains — failures stay within cost tier before escalating
+  tier_chains:
+    free:    [ollama/gemma4:26b, ollama/gemma4:e4b]
+    cheap:   [qwen/qwen3.5-flash, openrouter/google/gemma-4-31b-it, groq/openai/gpt-oss-120b]
+    mid:     [gemini/gemini-3.5-flash-lite, openrouter/google/gemma-4-31b-it, deepseek/deepseek-flash]
+    premium: [xai/grok-4.20-0309-reasoning, gemini/gemini-3.1-pro-preview, deepseek/deepseek-v4-pro, groq/openai/gpt-oss-120b]
+
+  # Council models for cross-LLM deliberation (HALCouncil)
+  # Architecture diversity: Meta open, Google open, Google proprietary, xAI frontier, Alibaba, DeepSeek
+  council: [groq/openai/gpt-oss-120b, openrouter/google/gemma-4-31b-it, gemini/gemini-3.5-flash-lite, xai/grok-4.6, qwen/qwen3.5-flash, deepseek/deepseek-flash]

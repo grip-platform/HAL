@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""Thin CLI wrapper for lib/hal/cache_idle_report.py.
+
+Usage:
+    hal-cache-idle-report                  # reads default path
+    hal-cache-idle-report path/to/file.jsonl
+"""
+import sys
+from pathlib import Path
+
+_HAL_ROOT = Path(__file__).resolve().parent.parent
+if str(_HAL_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HAL_ROOT))
+
+from lib.hal.cache_idle_report import main  # noqa: E402
+
+if __name__ == "__main__":
+    main()

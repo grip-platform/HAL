@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# HAL — Harness Abstraction Layer
+# Any model. Any provider. Any domain. Zero limits.
+#
+# Usage:
+#   hal                        # Interactive chat (warms up local models)
+#   hal --serve                # Start web UI + API server
+#   hal --serve --port 8080    # Custom port
+#   hal --model ollama/mistral # Chat with specific model
+#   hal --mode legal           # Chat in domain mode
+#   hal --status               # Show providers and health
+export HAL_HOME="${HAL_HOME:-$HOME/.hal}"
+
+# Format-side dispatch: `hal happi <subcommand>` routes to bin/happi.
+# Kept in the bash wrapper so it is zero-overlap with the Python-side
+# `--happi-api` runtime flag owned by the sibling session.
+if [[ "${1:-}" == "happi" ]]; then
+    shift
+    exec "$HAL_HOME/bin/happi" "$@"
+fi
+
+# osascript control-layer dispatch: `hal osa <subcommand>` routes to bin/osa.
+# The CLI is a thin adapter over lib.hal.osa.dispatch.osa — authorisation,
+# audit logging, and escape rules live in the library, not the bash wrapper.
+if [[ "${1:-}" == "osa" ]]; then
+    shift
+    exec "$HAL_HOME/bin/osa" "$@"
+fi
+
+# `hal decide ...` — typed decisions from a decision model (docs/decide.md).
+# It runs from HAL_HOME so `lib.hal` is HAL's own package, never the caller's
+# `lib/` (GRIP has one), and passes the caller's directory along so a relative
+# `--request FILE` still means what the caller typed.
+if [[ "${1:-}" == "decide" ]]; then
+    shift
+    export HAL_CALLER_CWD="$PWD"
+    cd "$HAL_HOME" && exec python3 -m lib.hal.decide "$@"
+fi
+
+# Phase B: `hal save [achievement]` — HAL-native session persistence.
+# Writes a JSONL entry + refreshes state/session-context.md without any
+# GRIP/CLAUDE_DIR dependency. Intentionally narrower than GRIP's
+# /save orchestrator; see lib/hal/save.py for the contract.
+if [[ "${1:-}" == "save" ]]; then
+    shift
+    cd "$HAL_HOME" && exec python3 -m lib.hal.save "$@"
+fi
+
+# `hal llm <verb> [args]` — the HAL front-door to GRIP's canonical
+# active-llm marker CLI. One store, two doors (syscall-doctrine): this
+# block reimplements NO marker logic — it forwards verbatim to
+# `python3 -m lib.active_llm`, so `hal llm set X` is byte-for-byte the
+# same write as GRIP's `/llm set X` (and `hal llm pin X` inherits the
+# W3a session-lifetime TTL). GRIP absent (HAL standalone) -> clear error
+# + non-zero, never a second store (mirrors server.py's _grip_active_llm
+# fail-safe).
+if [[ "${1:-}" == "llm" ]]; then
+    shift
+    GRIP_HOME="${CLAUDE_DIR:-$HOME/.claude}"
+    if [ ! -f "$GRIP_HOME/lib/active_llm.py" ]; then
+        echo "hal llm: GRIP home not found ($GRIP_HOME) — \`hal llm\` needs GRIP installed" >&2
+        exit 1
+    fi
+    cd "$GRIP_HOME" && exec env PYTHONPATH="$GRIP_HOME" python3 -m lib.active_llm "$@"
+fi
+
+# `hal welcome [--provider N] [--voice V] [--rate N] [--text STR] [--dry-run]`
+# Speaks a context-aware greeting through streaming TTS (macOS `say`).
+# Intended for a post-reboot ritual: operator types `hal welcome` and
+# HAL speaks a summary of repo state + one suggested next action.
+if [[ "${1:-}" == "welcome" ]]; then
+    shift
+    cd "$HAL_HOME" && exec python3 -m lib.hal.welcome "$@"
+fi
+
+# `hal voice <subcommand>` — voice-harness introspection CLI.
+# Currently: `hal voice usage` prints per-provider monthly usage +
+# free-tier limits, exits non-zero when any provider is over 80%.
+if [[ "${1:-}" == "voice" ]]; then
+    shift
+    cd "$HAL_HOME" && exec python3 -m lib.hal.voice.usage_cli "$@"
+fi
+
+# `hal gg++` — Gemini free-tier fast-path: skips the provider chain and routes
+# directly to gemini-3.5-flash-lite (repointed from gemini-2.5-flash on
+# 2026-11-24, GRIP#9389; 1M TPM free tier, 15 RPM). Use when Groq is
+# rate-limited or for batch scoring where cost matters more than latency.
+if [[ "${1:-}" == "gg++" ]]; then
+    shift
+    cd "$HAL_HOME" && exec python3 -m lib.hal.cli --model gemini/gemini-3.5-flash-lite "$@"
+fi
+
+cd "$HAL_HOME" && exec python3 -m lib.hal.cli "$@"

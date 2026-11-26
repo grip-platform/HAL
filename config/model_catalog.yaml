@@ -1,0 +1,1412 @@
+# HAL Model Catalogue — per-model metadata for the /models picker.
+#
+# This file is consumed by lib/hal/models_command.py to render rich,
+# grouped, filterable listings. Provider config (base_url, api_key_source,
+# routing) lives in providers.yaml; this file holds the user-facing
+# metadata that providers.yaml deliberately omits.
+#
+# Schema per entry:
+#   address          provider/model-name (matches parse_model_address())
+#   tier             free | cheap | mid | premium | frontier | subscription | local
+#   paid             true if pay-per-token, false if free or flat-fee
+#   modality         text | text+vision | text+audio | multimodal
+#   context_window   integer tokens (input window)
+#   tags             list of capability hints (frontier, fast, reasoning,
+#                    coding, vision, multilingual, creative, long-context)
+#   strengths        bullet list — what this model is *best* at
+#   description      one paragraph — when to pick this model
+#
+# Tier semantics:
+#   subscription  flat-fee plan (e.g. Anthropic Pro/Max via OAuth) —
+#                 zero cost per request, finite quota
+#   frontier      cutting-edge quality, highest pay-per-token cost
+#   premium       strong reasoning models, mid-high cost
+#   mid           balanced quality/cost workhorse
+#   cheap         high-volume, latency-sensitive, low cost
+#   free          actually free (or local — see local tier)
+#   local         runs on the user's hardware, no network egress
+#
+# Adding a model: also confirm the bare ID is listed in providers.yaml.
+# Removing a model: keep this file in sync with providers.yaml.
+
+models:
+
+  # ────────────────────────────────────────────────────────────────
+  # SUBSCRIPTION TIER (flat-fee, zero per-request cost)
+  # ────────────────────────────────────────────────────────────────
+  #
+  # Anthropic rows carry no providers.yaml entry by design: Claude is reached
+  # through CCH (the Claude Code subscription signer), and a provider row would
+  # misattribute subscription spend as metered API spend. Every row here must
+  # still have its OWN price row in lib/hal/cost_tracker.py, and a model that
+  # Anthropic gates by client version must have its floor in
+  # lib/hal/utils/cch.py _MODEL_MIN_CC_VERSION — tests/test_anthropic_catalogue_parity.py
+  # fails naming the file that lacks it.
+
+  - address: anthropic/claude-fable-5-2
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [frontier, reasoning, coding, long-context, agentic]
+    strengths:
+      - Current Fable generation; the vendor lists Fable 5.1 as legacy beside it (read 2026-11-11)
+      - Cheaper than Fable 5.1 on every column -- $8 in / $40 out, $0.20 cache hits, $10 and $16 cache writes
+      - 1M token context at standard pricing; thinking always on; default effort high
+    description: >
+      Anthropic's recommended model "for demanding reasoning and long-horizon
+      agentic work" (models overview, read 2026-11-11). CCH must advertise Claude
+      Code 2.1.290 or newer for it: at 2.1.280 the API answered "Claude Code
+      2.1.280 does not support this model; version 2.1.290 or newer is
+      required", while Opus 5.5 and Fable 5.1 served in the same run.
+      Advertising 2.1.319 it answered as claude-fable-5-2 (scripts/probe_models.py,
+      2026-11-11, a nonsense control NOT SERVED). Routes through the anthropic
+      provider (CCH subscription).
+
+  - address: anthropic/claude-fable-5-1
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [frontier, reasoning, coding, long-context, agentic]
+    strengths:
+      - Fable generation of 2026-09-01; superseded by Fable 5.2, and vendor-listed legacy since
+      - Cache hits cut 4x to $0.25 per MTok at unchanged $10 in / $50 out
+      - 1M token context natively; thinking always on
+    description: >
+      Anthropic's most capable widely released model, for the most demanding
+      reasoning and long-horizon agentic work. CCH must advertise Claude Code
+      2.1.251 or newer for it. Listed by /v1/models on the subscription token
+      and the direct key (12 ids, has_more=false, 2026-09-24). Routes through
+      the anthropic provider (CCH subscription).
+
+  - address: anthropic/claude-fable-5
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [frontier, reasoning, coding, long-context, agentic]
+    strengths:
+      - Anthropic's most capable widely released model
+      - 1M token context — the maximum is also the default
+      - State-of-the-art long-horizon agentic and reasoning work
+      - Thinking is always on; the raw chain of thought is never returned
+    description: >
+      The most capable model in the fleet, for the most demanding reasoning
+      and long-horizon agentic work. Premium pricing (above Opus tier) and
+      slower, deliberate turns — reach for it when correctness on a hard,
+      open-ended task matters more than latency or cost. Routes through the
+      anthropic provider (CCH subscription; hal-anthropic-external API-key
+      path as fallback).
+
+  - address: anthropic/claude-opus-5-5
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [frontier, reasoning, coding, long-context, agentic]
+    strengths:
+      - Successor to Opus 5 at a lower price — $4 in / $20 out, cache hits $0.20
+      - 1M context natively, 128K max output, Jun-2026 cutoff
+      - The vendor's recommended starting model
+    description: >
+      The Opus 5 successor (2026-09-23), priced below it. GRIP's launch default
+      from 2026-09-24; HAL's frontier seat and ladder stay on Opus 5 until Opus
+      5.5 is measured there. CCH must advertise Claude Code 2.1.280 or newer —
+      at 2.1.251 the API answers 400 "version 2.1.280 or newer is required"
+      (probed through CCH 2026-09-24). Never send the [1m] suffix: Claude Code
+      strips it, the API answers 404 to claude-opus-5-5[1m]. Thinking cannot be
+      disabled and the default effort is medium. Routes through the anthropic
+      provider (CCH subscription).
+
+  - address: anthropic/claude-opus-5
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [frontier, reasoning, coding, long-context, agentic]
+    strengths:
+      - Claude 5 frontier generation — Opus class
+      - 1M token context
+      - Strong agentic reasoning with tool use
+      - Live-verified via CCH 2026-08-26 (claude -p --model claude-opus-5)
+    description: >
+      The Opus-class Claude 5 frontier model — the harness-aware /frontier
+      seat when the driving harness is NOT Claude Code. Routes through the
+      anthropic provider (CCH subscription; hal-anthropic-external API-key
+      path as fallback).
+
+  - address: anthropic/claude-opus-4-8
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [frontier, reasoning, coding, long-context]
+    strengths:
+      - Most capable Opus-tier model — highly autonomous
+      - 1M token context at standard pricing (no long-context premium)
+      - State-of-the-art long-horizon agentic work, knowledge work, memory
+      - Clearer, warmer writing than prior Opus
+    description: >
+      The current flagship Opus and this account's default REPL model. Best
+      for complex architecture, large refactors, and multi-step planning
+      where one wrong step costs hours. Available via subscription
+      (run `hal --subscribe` to activate).
+
+  - address: anthropic/claude-opus-4-7
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [frontier, reasoning, coding, long-context]
+    strengths:
+      - Highest reasoning quality available today
+      - 1M token context — read entire codebases in one shot
+      - Best-in-class at multi-step planning and refactoring
+      - Extended thinking surfaces the chain of thought
+    description: >
+      The frontier reasoning model. Best for complex architectural decisions,
+      large refactors, and tasks where one wrong step costs hours. Slower
+      and more expensive than smaller models, but pays for itself when
+      correctness matters more than throughput. Available via subscription
+      (run `hal --subscribe` to activate).
+
+  - address: anthropic/claude-sonnet-5-5
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [coding, reasoning, long-context, prompt-caching]
+    strengths:
+      - Released 2026-09-28 at Sonnet 5's $2 in / $10 out, with cache hits halved to $0.10
+      - 1M context natively, 128K max output, Jun-2026 cutoff, "Fast" latency, adaptive thinking with a default effort of high
+      - Up to 300k output tokens on the Message Batches API with the output-300k-2026-03-24 beta header
+    description: >
+      The Sonnet 5 successor (vendor model page and models overview, read
+      2026-10-12). Catalogued, not routed: no HAL chain, seat or default moves
+      to it until it is measured there. Served through CCH on 2026-10-12 with
+      the signer advertising Claude Code 2.1.296 (the binary on PATH), the
+      response keyed claude-sonnet-5-5 and a bogus control id refused. Not
+      gated by client version the way Opus 5.5 is: the same signer pinned to
+      2.1.251 was served (Opus 5.5 in the same run was refused with "version
+      2.1.280 or newer is required"), so it needs no _MODEL_MIN_CC_VERSION
+      floor. Cache hits are 0.05x the base input
+      price (pricing footnote 2, shared with Opus 5.5). Routes through the
+      anthropic provider (CCH subscription).
+
+  - address: anthropic/claude-sonnet-5
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [coding, reasoning, long-context, prompt-caching]
+    strengths:
+      - Claude Code's default model; the fastest current Claude with a 1M window
+      - $2 in / $10 out — the vendor's pricing footnote calls this "the standard price"
+      - Accepts disabled thinking, unlike Opus 5.5 and the Fable generation
+    description: >
+      The high-throughput Claude 5 model for routine coding and reasoning.
+      Listed by /v1/models on the subscription token and the direct key
+      (2026-09-24). Routes through the anthropic provider (CCH subscription).
+
+  - address: anthropic/claude-sonnet-4-6
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [reasoning, coding, balanced]
+    strengths:
+      - Sonnet-class quality at lower latency than Opus
+      - Excellent coding and tool-use performance
+      - Strong vision capability for screenshots and diagrams
+    description: >
+      The everyday workhorse of the subscription fleet. Picks up most
+      coding, writing, and analysis tasks faster than Opus while still
+      being noticeably stronger than open-weight alternatives.
+
+  - address: anthropic/claude-haiku-5-5
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [fast, cheap, coding, long-context]
+    strengths:
+      - Released 2026-10-07, "built for high-volume, latency-sensitive work such as classification, routing, extraction, and subagent tasks"
+      - The first 1M Haiku; 128K max output; adaptive thinking with a default effort of medium; Jun-2026 cutoff; "Fastest" latency
+      - From $0.10 in / $0.50 out with $0.01 cache hits, priced by prompt length -- five times those rates once a prompt exceeds 100,000 tokens
+    description: >
+      Haiku 5.5 (vendor model page read 2026-10-12). Catalogued, not routed:
+      no HAL chain, seat or default moves to it until it is measured there.
+      Served through CCH on 2026-10-12 with the signer advertising Claude Code
+      2.1.296, the response keyed claude-haiku-5-5 and a bogus control id
+      refused, and served again with the signer pinned to 2.1.251 while Opus
+      5.5 was refused in the same run, so it needs no _MODEL_MIN_CC_VERSION
+      floor. Priced by PROMPT LENGTH: lib/hal/cost_tracker.py carries the
+      first tier and _REQUEST_TIERS the rates for prompts over 100,000 tokens,
+      counting cache reads and writes as the vendor does, while
+      config/model_prices.yaml prices the first tier only (max_prompt_tokens).
+      Its tokeniser counts about 30% more tokens than Haiku 4.5 for the same
+      text, so a Haiku 4.5-era 100K prompt is already over the threshold.
+      Routes through the anthropic provider (CCH subscription).
+
+  - address: anthropic/claude-haiku-4-5
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 200000
+    tags: [fast, cheap, coding]
+    strengths:
+      - Fast subscription option — sub-second time-to-first-token
+      - Cheap quota burn rate compared to Sonnet/Opus
+      - Surprisingly capable at coding and routing tasks
+    description: >
+      Pick this for high-volume, latency-sensitive work inside the
+      subscription quota — chat assistants, classifiers, routers, and
+      anything where you'd otherwise reach for a cheap cloud model.
+
+  # Kimi Code -- Moonshot's Kimi membership coding service (GRIP Pool D,
+  # sovereign-council seal e49c00c214c500be, 2026-09-07). A SEPARATE product
+  # from the pay-per-token moonshot/* rows: "the Kimi Code API is independent
+  # from the API service on this platform". Host api.kimi.com/coding,
+  # credential keychain grip-kimi-coding (env KIMI_CODING_API_KEY), ids
+  # k3 / k3-256k / kimi-for-coding / kimi-for-coding-highspeed. Billed as a
+  # membership quota, not per token: "refreshes automatically every 7 days
+  # ... a rolling 5-hour rate window ... Requests from the CLI, VS Code, and
+  # third-party tools all count toward that quota". UNARMED until the
+  # credential exists; lands together with the gateway_egress endpoint row.
+  - address: kimi-coding/k3
+    tier: subscription
+    paid: true
+    modality: text+vision
+    # 262144 is the floor every K3-capable plan has (Moderato). Allegretto and
+    # above get 1048576 -- "manually set the context-window field to 1048576
+    # to use K3's full up-to-1M context" -- raise this only once the plan is
+    # known; a 1M value on a Moderato key would over-fill the window.
+    context_window: 262144
+    tags: [subscription, coding, pool-d, frontier, reasoning, long-context, vision]
+    strengths:
+      - Kimi K3 (2.8T parameters) on the Kimi Code membership quota, not per token
+      - 1M context on Allegretto and above; 262144 on Moderato
+      - reasoning_effort low / high / max (default high on this endpoint)
+      - Image and video input
+    description: >
+      The Kimi Code flagship. "k3 (1M) consumes about twice as much quota as
+      k3-256k" -- prefer k3-256k unless the 1M window is needed. A 401 here
+      can mean "the requested capability exceeds your plan's entitlements",
+      not a bad key.
+
+  - address: kimi-coding/k3-256k
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 262144
+    tags: [subscription, coding, pool-d, reasoning, long-context, vision]
+    strengths:
+      - Same Kimi K3 within 256k context, about half the quota of k3
+      - reasoning_effort low / high / max
+      - Image input only (no video)
+    description: >
+      The quota-friendly K3: "Within 256k context, it delivers the same
+      results." The GRIP ladder's Pool D rung. Moderato and above.
+
+  - address: kimi-coding/kimi-for-coding
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 262144
+    tags: [subscription, coding, pool-d, agentic, vision]
+    strengths:
+      - Kimi K2.7 Code, thinking always on; output up to 32768 tokens
+      - Available on every membership tier (Andante and above)
+      - Image and video input
+    description: >
+      The Kimi Code K2.7 Code model -- "good at code completion and routine
+      development tasks".
+
+  - address: kimi-coding/kimi-for-coding-highspeed
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 262144
+    tags: [subscription, coding, pool-d, fast, agentic, vision]
+    strengths:
+      - K2.7 Code served at about six times the output speed
+      - '"6× speed, 3× quota usage" per the vendor -- three times the quota of kimi-for-coding'
+      - Allegretto plan or above
+    description: >
+      The high-speed K2.7 Code. A mistyped id "silently falls back to the
+      standard kimi-for-coding -- no error, no speedup", so spell it exactly.
+
+  # Alibaba Cloud Model Studio Token Plan Personal Edition (provider
+  # qwen-token-plan): a flat-fee monthly subscription in Credits. "When
+  # cumulative consumption within the subscription cycle reaches the plan
+  # quota, the service is paused until the next subscription month"
+  # (alibabacloud.com/help/en/model-studio/token-plan-personal-overview, read
+  # 2026-10-08). Serves a cross-vendor catalogue on BOTH the OpenAI-compatible
+  # wire and the Anthropic-compatible wire (.../apps/anthropic/v1) -- the
+  # surface the W4 cascade dials. The window is the value Alibaba's own Claude
+  # Code setup sets, CLAUDE_CODE_MAX_CONTEXT_TOKENS "983616"
+  # (alibabacloud.com/help/en/model-studio/claude-code).
+  - address: qwen-token-plan/qwen3.8-max
+    tier: subscription
+    paid: true
+    modality: text
+    context_window: 983616
+    tags: [subscription, coding, pool-d, long-context]
+    strengths:
+      - Alibaba Token Plan flagship, billed from the plan's monthly Credits, not per token
+      - The one W4 fallback whose window fits a GRIP session's start-up context
+    description: >
+      Token Plan Personal Edition, Singapore region. Pauses at the monthly
+      quota rather than billing more; an Extra Bundle is a separate, explicit
+      purchase.
+
+  - address: qwen-token-plan/qwen4-max
+    tier: subscription
+    paid: true
+    modality: text+vision
+    context_window: 983616
+    tags: [subscription, reasoning, coding, vision, pool-d, long-context]
+    strengths:
+      - Alibaba's newest flagship (GA 2026-11-16) via the Token Plan, billed from the plan's monthly Credits, not per token
+      - The vendor's own Token Plan page lists it first, ahead of qwen3.8-max
+    description: >
+      Token Plan Personal Edition, Singapore region. enable_thinking defaults
+      true and spends completion tokens on hidden reasoning before any visible
+      answer. Pauses at the monthly quota rather than billing more.
+
+  - address: qwen-token-plan/qwen3.8-flash
+    tier: subscription
+    paid: true
+    modality: text
+    context_window: 983616
+    tags: [subscription, fast, pool-d, long-context]
+    strengths:
+      - Current flash-tier Qwen via the Token Plan, billed from the plan's monthly Credits, not per token
+      - Was already listed in this provider's models: array before this row existed
+    description: >
+      Token Plan Personal Edition, Singapore region. Pauses at the monthly
+      quota rather than billing more; an Extra Bundle is a separate, explicit
+      purchase.
+
+  - address: qwen-token-plan/deepseek-v4-pro
+    tier: subscription
+    paid: true
+    modality: text
+    context_window: 983616
+    tags: [subscription, coding, pool-d, long-context, reasoning]
+    strengths:
+      - DeepSeek V4 Pro via the Token Plan, billed from the plan's monthly Credits, not per token
+      - The DeepSeek rung for the W4 cascade (Claude Code fallback), verified on the Anthropic wire
+    description: >
+      Token Plan Personal Edition, Singapore region, Anthropic-compatible wire.
+      Pauses at the monthly quota rather than billing more; an Extra Bundle is
+      a separate, explicit purchase.
+
+  # ────────────────────────────────────────────────────────────────
+  # FRONTIER TIER (cutting-edge cloud, pay-per-token)
+  # ────────────────────────────────────────────────────────────────
+
+  - address: gemini/gemini-3.1-pro-preview
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 1048576
+    tags: [frontier, reasoning, long-context, vision, multilingual]
+    strengths:
+      - 1,048,576-token input limit (the vendor's model page, read 2026-10-18; the 2M figure never shipped)
+      - Native multimodal — text, image, audio, video in one prompt
+      - Strong multilingual coverage including SA languages
+    description: >
+      Google's frontier preview. Best when context length or multimodal
+      input is the bottleneck — analysing long videos, reading entire
+      books, processing mixed media corpora. Quality on par with the top
+      Anthropic and OpenAI tier for text reasoning.
+
+  - address: gemini/gemini-3.5-flash-lite
+    tier: cheap
+    paid: true
+    modality: multimodal
+    context_window: 1048576
+    tags: [cheap, stable, multimodal, agentic, value]
+    strengths:
+      - "Flat pricing: $0.30 in / $2.50 out per Mtok (ai.google.dev/gemini-api/docs/pricing)"
+      - 1,048,576 input tokens, 65,536 output; input text, image, video, audio, PDF
+      - Thinking supported; optimized for high-volume agentic tasks
+    description: >
+      Google's redirect target for the retired "2.5 Flash" id (effective
+      2026-12-01, ai.google.dev/gemini-api/docs/deprecations), read from
+      ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite on 2026-11-24.
+      Replaced that retired id as HAL's mid-tier Gemini default the same day
+      (GRIP#9389). Free tier available.
+
+  - address: gemini/gemini-4-argon
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 1048576
+    tags: [frontier, reasoning, coding, agentic, long-context, vision, audio, video]
+    strengths:
+      - GA 2026-10-13 (vendor changelog); knowledge cutoff March 2026 (model card)
+      - 1,048,576-token window shared by input and output; 65,536 output tokens by default
+      - Thinking levels low / medium / high (default medium); input text, image, video, audio, PDF
+    description: >
+      Google's Gemini 4 generation frontier model, read from
+      ai.google.dev/gemini-api/docs/models/gemini-4-argon on 2026-10-18. $2 in / $10 out /
+      $0.10 cached per 1M tokens through 2026-11-30, then $4 / $20 / $0.20 (the price row
+      carries the date). Not on the free tier; implicit caching only. Listed AFTER 3.1 Pro
+      on purpose: GRIP's lib/hal_model_resolver.py pins the first gemini row, and every
+      seat other than the judge waits for the 2026-10-18 Argon ultraplan's evaluation.
+
+  - address: gemini/gemini-3.6-flash
+    tier: premium
+    paid: true
+    modality: multimodal
+    context_window: 1048576
+    tags: [flash, coding, agentic, multimodal, cost-effective]
+    strengths:
+      - Stable; the model gemini-3.5-flash requests are routed to since 2026-10-08
+      - 1,048,576 input tokens, 65,536 output; thinking supported; input text, image, video, audio, PDF
+      - $0.75 in / $3.75 out / $0.075 cached per 1M through 2026-12-31, then $1.50 / $7.50 / $0.15
+    description: >
+      Google's flash generation after 3.5, read from
+      ai.google.dev/gemini-api/docs/models/gemini-3.6-flash on 2026-10-18. Free tier
+      available. Listed after Argon: not a default, and the first gemini row is unchanged.
+
+  - address: gemini/gemini-3.8-flash
+    tier: premium
+    paid: true
+    modality: multimodal
+    context_window: 1048576
+    tags: [flash, coding, agentic, multimodal, cost-effective]
+    strengths:
+      - Stable; thinking levels low, medium, high ("minimal is not supported and returns an error")
+      - 1,048,576 input tokens, 65,536 output; input text, image, video, audio, PDF
+      - Same price as gemini-3.6-flash, including the 2027-01-01 doubling
+    description: >
+      Google's newest flash model, read from ai.google.dev/gemini-api/docs/models/gemini-3.8-flash
+      on 2026-10-18. Free tier available. Listed, not a default.
+
+  # Gemini 4 Carbon and Hydrogen, onboarded 2026-11-24 through /dogfood-domain
+  # (model-dogfood plan, phase 2 family 6). Facts read from
+  # aistudio.google.com/docs/models/gemini-4-carbon, .../gemini-4-hydrogen,
+  # .../pricing and .../changelog, plus deepmind.google/models/model-cards/
+  # for the knowledge cutoff, all on 2026-11-24. Listed AFTER 3.1 Pro and the
+  # whole 2026-10-18 tail: HAL's lib/hal_model_resolver.py pins the FIRST
+  # gemini row, so inserting here never moves it. Reachable by name only: the
+  # model-dogfood plan's decision 6 keeps every default, flagship pin,
+  # frontier seat, routing chain, and council seat (including AGORA's judge
+  # and its candidates) off both ids.
+  - address: gemini/gemini-4-carbon
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 1048576
+    tags: [frontier, reasoning, coding, cybersecurity, science, agentic, long-context, vision, audio, video]
+    strengths:
+      - Announced 2026-10-28 (restricted access to cyber defenders); GA 2026-11-10 (vendor changelog); knowledge cutoff March 2026 (model card)
+      - 1,048,576-token window shared by input and output; 65,536 output tokens by default
+      - Thinking levels low / medium / high (no xhigh); input text, image, video, audio, PDF
+    description: >
+      Google's Gemini 4 generation top model, read from
+      aistudio.google.com/docs/models/gemini-4-carbon and .../changelog on 2026-11-24.
+      $2 in / $10 out / $0.10 cached per 1M tokens through 2026-11-30, then $4 / $20 /
+      $0.20 (the price row carries the date). Not on the Free tier; implicit caching
+      only. Listed, not a default: no chain, pin, or seat names it.
+
+  - address: gemini/gemini-4-hydrogen
+    tier: premium
+    paid: true
+    modality: multimodal
+    context_window: 1048576
+    tags: [premium, reasoning, coding, agentic, long-context, vision, audio, video, value]
+    strengths:
+      - GA 2026-11-12 (vendor changelog); knowledge cutoff March 2026 (model card)
+      - 1,048,576-token window shared by input and output; 65,536 output tokens by default
+      - Thinking levels low / medium / high / xhigh; input text, image, video, audio, PDF
+    description: >
+      Google's Gemini 4 generation workhorse, read from
+      aistudio.google.com/docs/models/gemini-4-hydrogen and .../changelog on 2026-11-24.
+      $1.50 in / $7.50 out / $0.075 cached per 1M tokens, flat (no dated change).
+      Free tier available; implicit caching only. Listed, not a default: no
+      chain, pin, or seat names it.
+
+  - address: openai/gpt-6.2-astra
+    tier: frontier
+    paid: true
+    modality: text+vision
+    context_window: 1050000
+    tags: [frontier, reasoning, coding, vision, long-context, computer-use, agentic]
+    strengths:
+      - OpenAI's flagship for complex reasoning and coding
+      - 1.05M context window (922K max input), 128K maximum output
+      - Tool calling via the Responses API; reasoning effort low/medium/high/xhigh/max
+    description: >
+      Launched 2026-11-17 alongside GPT-6.1 Terra and GPT-6 Luna (out of scope
+      here). Knowledge cutoff 2026-05-18. Standard pricing (<=272K input
+      tokens, developers.openai.com/api/docs/pricing read 2026-11-24): $8/1M
+      input, $0.40/1M cached input, $10/1M 30-minute cache writes, $20/1M
+      12-hour cache writes, $40/1M output; above 272K input tokens input and
+      cache rates double and output is 1.5x, for the whole request ($16 /
+      $0.80 / $60). Input modalities text and image; output text only
+      ("Input modalities: text, image", "Output modalities: text",
+      "Unsupported modalities: audio, video" -
+      developers.openai.com/api/docs/models/gpt-6.2-astra, read 2026-11-24).
+      Rejects the `none` reasoning effort (quoted verbatim: "The API rejects
+      requests that set reasoning effort to none"). Whether it refuses custom
+      temperature/top_p/logprobs the way GPT-6 Astra's own page states is NOT
+      repeated on this id's page and so UNVERIFIED by direct vendor quote;
+      this file's model_quirks.py shared gpt-6 prefix guard applies the same
+      restriction on the assumption it is inherited, not independently
+      probed (no paid call was made). Reached by explicit address only:
+      never a default, routing chain or council seat. API ID: gpt-6.2-astra.
+
+  - address: openai/gpt-6.2-sol
+    tier: frontier
+    paid: true
+    modality: text+vision
+    context_window: 1050000
+    tags: [frontier, reasoning, coding, vision, long-context, computer-use, agentic]
+    strengths:
+      - OpenAI's workhorse tier of the GPT-6.2 generation
+      - 1.05M context window (922K max input), 128K maximum output
+      - Tool calling via the Responses API; reasoning effort low/medium/high/xhigh/max
+    description: >
+      Launched 2026-11-17. Knowledge cutoff 2026-06-01. Standard pricing
+      (<=272K input tokens, developers.openai.com/api/docs/pricing read
+      2026-11-24): $2/1M input, $0.10/1M cached input, $2.50/1M 30-minute
+      cache writes, $5/1M 12-hour cache writes, $10/1M output; above 272K
+      input tokens $4 / $0.20 / $15 (input / cached / output), output at 1.5x
+      for the whole request. Input modalities text and image; output text
+      only (same vendor-page wording as Astra, read 2026-11-24 at
+      developers.openai.com/api/docs/models/gpt-6.2-sol). Rejects the `none`
+      reasoning effort (quoted verbatim: "The API rejects requests that set
+      reasoning effort to none"). Temperature/top_p/logprobs refusal:
+      UNVERIFIED by direct vendor quote on this id's page, same caveat as
+      Astra above. Reached by explicit address only: never a default,
+      routing chain or council seat. API ID: gpt-6.2-sol.
+
+  - address: openai/gpt-6-astra
+    tier: frontier
+    paid: true
+    modality: text+vision
+    context_window: 1050000
+    tags: [frontier, reasoning, coding, vision, long-context, computer-use, agentic]
+    strengths:
+      - OpenAI's most capable model (released 2026-09-03) for end-to-end work - reasoning, coding, computer use, research
+      - 1.05M context, 128K max output, reasoning effort low / medium / high / xhigh / max
+      - Async tool calls, mid-turn steering and configuration_update on the Responses API
+    description: >
+      OpenAI's flagship as of 2026-09-03 (GPT-6 Astra). Pick it for the hardest
+      end-to-end agentic work when cost is secondary. Knowledge cutoff 2026-04-30.
+      Standard pricing $10/1M input, $1/1M cached input, $12.50/1M cache writes,
+      $50/1M output; a request with more than 272K input tokens is billed at 2x
+      input and cache rates and 1.5x output for the whole request. Quirks: no
+      temperature, top_p or logprobs; reasoning effort none is refused (start
+      at low); tool calling requires the Responses API. Deliberately in no
+      routing chain and no council seat (2.5x the Sol rate) - that is a price
+      decision, unaffected by the serving evidence below. API ID: gpt-6-astra.
+      Verified serving on 2026-09-08: listed by api.openai.com/v1/models, and
+      HTTP 200 on both wires - chat/completions in 1.82s (13 in / 4 out) and
+      responses in 2.16s (13 in / 5 out). Verified 2026-09-12: routed through
+      HAL's own gateway on :4010 — Astra named all four bands of a colour test
+      image (1-in-24 blind odds) and the no-image control correctly refused to
+      guess, which completes step 4 of rules/adding-a-new-llm-to-hal.md
+      section 7.
+
+  - address: openai/gpt-5.6-sol
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 1050000
+    tags: [frontier, reasoning, coding, cybersecurity, science, vision, multilingual]
+    strengths:
+      - OpenAI GPT-5.6 flagship tier — hardest tasks, leading coding/science
+      - 1.05M context, 128K max output, reasoning effort up to max
+    description: >
+      OpenAI's GA flagship as of 2026-07-09. The GPT-5.6 frontier tier for the
+      hardest professional work — coding, knowledge work, cybersecurity, and
+      science. 1.05M token context, knowledge cutoff 2026-02-16. Pricing
+      $5/1M input, $30/1M output. API ID: gpt-5.6-sol (the bare alias
+      gpt-5.6 routes here).
+
+  - address: openai/gpt-5.6-terra
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 1050000
+    tags: [frontier, balanced, coding, vision, multilingual]
+    strengths:
+      - GPT-5.5-level performance at roughly 2x lower cost
+      - Balanced production workhorse for high-volume business tasks
+    description: >
+      OpenAI GPT-5.6 balanced tier (GA 2026-07-09). Matches GPT-5.5-level
+      quality at ~2x lower cost — the everyday production workhorse for
+      customer support, internal tools, and document analysis. 1.05M context,
+      knowledge cutoff 2026-02-16. Pricing $2.50/1M input, $15/1M output.
+      API ID: gpt-5.6-terra.
+
+  - address: openai/gpt-5.6-luna
+    tier: mid
+    paid: true
+    modality: multimodal
+    context_window: 1050000
+    tags: [mid, fast, cost-effective, high-volume]
+    strengths:
+      - Fastest and most affordable GPT-5.6 tier
+      - Latency-optimised for well-defined, high-volume work
+    description: >
+      OpenAI GPT-5.6 fast/affordable tier (GA 2026-07-09). Optimised for
+      latency and price on high-volume work — summarisation, drafting,
+      classification, routine automation. 1.05M context, knowledge cutoff
+      2026-02-16. Pricing $1/1M input, $6/1M output. API ID: gpt-5.6-luna.
+
+  - address: openai/gpt-5.5
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 128000
+    tags: [frontier, reasoning, coding, vision, multilingual]
+    strengths:
+      - OpenAI's current GA flagship for complex reasoning and coding
+      - Successor to GPT-4o series — stronger reasoning, multimodal
+    description: >
+      OpenAI's GA flagship as of June 2026. Best for complex reasoning,
+      coding, and multimodal tasks. API ID: gpt-5.5.
+
+  - address: openai/gpt-5.4
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 128000
+    tags: [frontier, balanced, vision]
+    description: "OpenAI balanced tier. API ID: gpt-5.4."
+
+  - address: openai/gpt-5.4-mini
+    tier: mid
+    paid: true
+    modality: multimodal
+    context_window: 128000
+    tags: [mid, fast, cost-effective]
+    description: "OpenAI fast/affordable tier. API ID: gpt-5.4-mini."
+
+  - address: openai/gpt-4o
+    tier: frontier
+    paid: true
+    modality: multimodal
+    context_window: 128000
+    tags: [frontier, reasoning, coding, vision, multilingual]
+    strengths:
+      - Battle-tested frontier model with broad capability
+      - Strong tool-use and structured-output reliability
+      - Mature ecosystem — tooling, prompts, integrations everywhere
+    description: >
+      OpenAI's general-purpose frontier model. Solid default when you
+      want a known quantity and broad ecosystem support. Less specialised
+      than the newer reasoning-tier models but very dependable.
+
+  - address: openai/o3-mini
+    tier: frontier
+    paid: true
+    modality: text
+    context_window: 200000
+    tags: [frontier, reasoning, math, coding]
+    strengths:
+      - Specialised for chain-of-thought reasoning and math
+      - Outperforms general-purpose models on benchmarks like AIME
+      - Cheaper than full o3 while keeping most of the capability
+    description: >
+      OpenAI's reasoning-tier mini model. Pick when the task is a
+      genuine reasoning problem — proofs, hard logic, complex
+      debugging — rather than free-form generation.
+
+  # replaced deepseek-reasoner → deepseek-v4-pro (2026-08-30: reasoner retired upstream; API serves ONLY the v4 lineup)
+  - address: deepseek/deepseek-v4-pro
+    tier: frontier
+    paid: true
+    modality: text
+    context_window: 1048576
+    tags: [frontier, reasoning, math, open]
+    strengths:
+      - Frontier reasoning at a fraction of the cost of US labs
+      - Open weights — reproducible, auditable, self-hostable
+      - Top-tier on competitive math and coding benchmarks
+    strengths:
+      - Frontier reasoning at a fraction of the cost of US labs
+      - Open weights — reproducible, auditable, self-hostable
+      - Top-tier on competitive math and coding benchmarks
+    description: >
+      DeepSeek's current frontier reasoning model (v4 line, verified
+      live 2026-08-30). Excellent quality-per-dollar; the
+      open-weights story matters if you ever want to run it
+      locally or audit behaviour.
+
+  - address: moonshot/kimi-k3
+    tier: frontier
+    paid: true
+    modality: text+vision
+    context_window: 1048576
+    tags: [frontier, long-context, reasoning, multilingual, coding, agentic, vision]
+    strengths:
+      - 1M-token context window (max_completion_tokens up to 1048576)
+      - Native visual understanding -- image and video input (API flags supports_image_in / supports_video_in)
+      - Always-on thinking; reasoning_effort in {low, high, max} (default max)
+      - Strong long-context recall + Chinese-English bilingual (Kimi lineage)
+      - Agentic tool-use and coding rivals Western frontier models
+    description: >
+      Moonshot's Kimi K3 — 1M-context frontier model, always-on reasoning. Metered dev API
+      (keychain:grip-moonshot). OpenAI-compatible but LOCKS temperature/top_p/n/presence_penalty/
+      frequency_penalty — omit them. $3.00 in / $15.00 out / $0.30 cache-hit per MTok.
+
+  # Kimi K3.1 Pro and its Highspeed variant, onboarded 2026-11-24 (GRIP's /dogfood-domain):
+  # platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart.md and the price table embedded in
+  # platform.kimi.ai/docs/pricing/chat (read 2026-11-24). Probe the same day: HTTP 200 from
+  # both, the reply's model field naming the id asked for. Reachable by name only.
+  - address: moonshot/kimi-k3.1-pro
+    tier: frontier
+    paid: true
+    modality: text+vision
+    context_window: 1048576
+    tags: [frontier, long-context, reasoning, coding, agentic, vision]
+    strengths:
+      - Post-trained Kimi K3 with "substantially larger post-training compute" (vendor)
+      - 1M-token context, flat pricing with no tiering by context length
+      - Always-on thinking; reasoning_effort in {low, high, max} (default max)
+      - Cheaper than Kimi K3 on every column
+    description: >
+      Moonshot's Kimi K3.1 Pro: the first K3.1 model, a 3T-class open-weight flagship.
+      Metered dev API (keychain:grip-moonshot), unlocked by a top-up of at least $1.
+      LOCKS temperature/top_p/n/presence_penalty/frequency_penalty -- omit them;
+      max_completion_tokens defaults to 131072 (up to 1048576); return the complete
+      assistant message unchanged in multi-turn and tool calls. $2.00 in / $10.00 out /
+      $0.20 cache-hit / $2.00 5-minute cache write ($4.00 for 1 hour) per MTok.
+
+  - address: moonshot/kimi-k3.1-pro-highspeed
+    tier: frontier
+    paid: true
+    modality: text+vision
+    context_window: 1048576
+    tags: [frontier, long-context, reasoning, fast, vision]
+    strengths:
+      - Same model as kimi-k3.1-pro at 2-3x the speed (vendor)
+      - Same 1M context and the same locked sampling parameters
+    description: >
+      Kimi K3.1 Pro served faster. Twice K3.1 Pro's input and output price: $4.00 in /
+      $20.00 out / $0.20 cache-hit / $4.00 5-minute cache write ($8.00 for 1 hour) per MTok.
+
+  - address: zhipu/glm-5.1
+    tier: frontier
+    paid: true
+    modality: text
+    context_window: 128000
+    tags: [frontier, coding, multilingual]
+    strengths:
+      - Aggressive coding-task performance
+      - Cost-competitive with the cheaper US frontier tier
+      - Operates well in Chinese-language workflows
+    description: >
+      Zhipu AI's top-tier coding model. Worth trying for repetitive
+      code-gen workloads where you want a different inductive bias
+      from the Anthropic/OpenAI/DeepSeek house styles.
+
+  # GLM-5.3, onboarded 2026-11-24 (GRIP#9431): Zhipu's GLM Coding Plan has answered
+  # every `glm-5.1` request with GLM-5.3 since at least 2026-11-24 (two probes, each
+  # beside a glm-5.3 control, both HTTP 200 with the reply's `model` field reading
+  # glm-5.3; docs.z.ai/guides/llm/glm-5.1 is still live but its own "Migrate to
+  # GLM-5.3" guide never mentions glm-5.1). V>>'s decision repoints
+  # _ZAI_MODEL_MAP["ANTHROPIC_DEFAULT_OPUS_MODEL"] (lib/hal/cc_env_bridge.py) and
+  # PROVIDER_CONFIGS["zhipu"]["default_model"] (lib/hal/happi/providers/
+  # openai_compat.py) to this id -- the label becomes true; behaviour does not
+  # change. glm-5.1 stays listed and reachable by name, since Zhipu still serves it.
+  - address: zhipu/glm-5.3
+    tier: frontier
+    paid: true
+    modality: text
+    context_window: 1000000
+    tags: [frontier, long-context, reasoning, coding, china-hosted]
+    strengths:
+      - Z.ai's current GLM Coding Plan flagship -- the model that actually answers a glm-5.1 request today
+      - 1M context, 128K max output; always-on thinking (thinking.type only accepts "enabled")
+      - reasoning_effort in {low, high, max}, default max; vendor recommends max "for complex tasks such as coding"
+    description: >
+      Z.ai's current coding-plan flagship. docs.z.ai/guides/llm/glm-5.3 (read
+      2026-11-24): 1M context, 128K max output, reasoning cannot be disabled
+      ("Disabling reasoning is no longer supported"); no locked sampling parameter is
+      documented. Served on both the Model API (OpenAI Chat Completion, OpenAI
+      Response and Anthropic Message endpoints) and the GLM Coding Plan subscription.
+      Priced by its own row in lib/hal/cost_tracker.py, never glm-5's.
+
+  # GLM-5.4, onboarded 2026-11-24 through /dogfood-domain: docs.z.ai/guides/llm/glm-5.4.md,
+  # read 2026-11-24. "Now available to all GLM Coding Plan users"; its metered Model API is
+  # "pending completion of the security assessment", so no per-token price is published --
+  # deliberately no cost_tracker.py or model_prices.yaml row (see
+  # tests/test_glm_5_4_onboarding.py). Reachable by name only: no default or seat names it.
+  - address: zhipu/glm-5.4
+    tier: frontier
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [frontier, long-context, reasoning, coding, agentic, multimodal, china-hosted]
+    strengths:
+      - First Loop Transformer flagship -- loops 28 GLM-5 layers twice, "reaching intelligence levels comparable to 2T-3T parameter models" (vendor)
+      - 1M context, 128K max output; always-on thinking, no reasoning_effort knob documented for this id
+      - Generalized Coding (vendor's term) -- writes code that generates video, 3D/CAD and games, not just software
+    description: >
+      Z.ai's newest flagship. Coding-Plan-only today -- the Model API has no published
+      per-token price (absent from docs.z.ai/guides/overview/pricing.md's "Latest Models"
+      table), so it carries no cost row on purpose; an unpriced call is reported loudly
+      instead of billed at a guess.
+
+  # ────────────────────────────────────────────────────────────────
+  # PREMIUM TIER (strong models, mid-high cost)
+  # ────────────────────────────────────────────────────────────────
+
+  # replaced qwen3.6-plus-preview → qwen3.8-max (2026-08-30: preview id retired at dashscope)
+  - address: qwen/qwen3.8-max
+    tier: premium
+    paid: true
+    modality: text
+    context_window: 1000000
+    tags: [reasoning, multilingual]
+    strengths:
+      - Alibaba's current max-tier — newest capability
+      - Excellent multilingual performance (CJK + EN)
+      - Strong agentic and tool-use traces
+    description: >
+      Alibaba's current flagship. Worth running side-by-side with
+      frontier US models when you want a different perspective.
+
+  - address: qwen/qwen4-max
+    tier: premium
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [premium, reasoning, coding, vision, agentic]
+    strengths:
+      - "Alibaba's newest flagship, GA 2026-11-16 (alibabacloud.com press room); 2.4T total / 71B active parameters"
+      - 1M context; thinking mode raises max output from 131,072 to 262,144 tokens
+      - "Vision input (text/image/video); $1.5/$4.5 per Mtok, Singapore/International"
+    description: >
+      Alibaba's current top-tier Qwen, succeeding qwen3.8-max. enable_thinking
+      defaults true and spends completion tokens on hidden reasoning before
+      any visible answer; a small max_tokens budget can return empty content
+      (measured). Also reachable via qwen-token-plan/qwen4-max (subscription).
+
+  - address: qwen/qwen3.8-flash
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 1000000
+    tags: [cheap, fast, high-volume]
+    strengths:
+      - "Verified $0.15/$0.47 per Mtok, Singapore/International (qwen3.5-flash is cheaper at $0.10/$0.40)"
+      - Current flash-tier Qwen, offered alongside qwen4-max on the same Token Plan subscription
+    description: >
+      The workhorse for this family: qwen4-max's newest flash-tier sibling,
+      picked over the Token Plan's "auto" router because auto's underlying
+      model is undisclosed and so cannot be priced or trialled honestly. Also
+      reachable via qwen-token-plan/qwen3.8-flash (subscription).
+
+  # arcee/trinity-large-thinking removed 2026-11-24: Arcee answers 404 "not
+  # accessible", the answer a nonsense id gets, and lists only resold models.
+
+  - address: moonshot/kimi-k2.7-code
+    tier: premium
+    paid: true
+    modality: text+vision
+    context_window: 262144
+    tags: [coding, agentic, reasoning, long-context, vision]
+    strengths:
+      - Dedicated coding model; higher task success in long contexts
+      - Thinking always on (Preserved Thinking) -- echo reasoning_content back on every turn
+      - Text, image and video input
+    description: >
+      Moonshot's Kimi K2.7 Code (catalogued 2026-09-07; live on GET /v1/models).
+      Metered dev API (keychain:grip-moonshot). Locks temperature/top_p/n/
+      presence_penalty/frequency_penalty and rejects tool_choice=required.
+      $0.95 in / $4.00 out / $0.19 cache-hit per MTok (pricing/chat-k27-code.md).
+
+  - address: moonshot/kimi-k2.7-code-highspeed
+    tier: premium
+    paid: true
+    modality: text+vision
+    context_window: 262144
+    tags: [coding, agentic, fast, long-context, vision]
+    strengths:
+      - Same model as kimi-k2.7-code served at ~180 tok/s (up to 260 tok/s short-context)
+      - Identical parameter constraints to kimi-k2.7-code
+      - Text, image and video input
+    description: >
+      High-speed serving of Kimi K2.7 Code (catalogued 2026-09-07; live on
+      GET /v1/models). Twice the price for the latency: $1.90 in / $8.00 out /
+      $0.38 cache-hit per MTok (pricing/chat-k27-code.md). Pick for interactive
+      coding loops where wall-clock matters more than cost.
+
+  # ────────────────────────────────────────────────────────────────
+  # MID TIER (balanced workhorses)
+  # ────────────────────────────────────────────────────────────────
+
+  - address: openrouter/google/gemma-4-31b-it
+    tier: mid
+    paid: true
+    modality: text
+    context_window: 128000
+    tags: [open, balanced, instruction-tuned]
+    strengths:
+      - Strong open-weights model via OpenRouter
+      - Instruction-tuned for chat and assistant workflows
+      - Per-token pricing competitive with Anthropic Haiku
+    description: >
+      Google's open Gemma 4 (31B) accessed through OpenRouter's
+      pass-through. Useful when you want open-weights provenance
+      with cloud-grade latency.
+
+  - address: openrouter/google/gemma-4-26b-a4b-it
+    tier: mid
+    paid: true
+    modality: text
+    context_window: 256000
+    tags: [open, fast, mixture-of-experts]
+    strengths:
+      - Mixture-of-Experts — 4B active params, 26B total
+      - 256K context window
+      - Fast inference for the active-param size
+    description: >
+      The MoE variant of Gemma 4. The 4B active path keeps inference
+      cheap and fast while the 26B total weights provide depth.
+
+  - address: openai/gpt-4o-mini
+    tier: mid
+    paid: true
+    modality: text+vision
+    context_window: 128000
+    tags: [fast, vision, balanced]
+    strengths:
+      - Reliable mid-tier OpenAI option with vision
+      - Strong tool-use and structured-output behaviour
+      - Mature ecosystem coverage
+    description: >
+      A safe, well-known mid-tier model. Pick when you want OpenAI
+      ecosystem features (function calling, JSON mode) at a
+      sensible price.
+
+  - address: moonshot/kimi-k2.6
+    tier: mid
+    paid: true
+    modality: text+vision
+    context_window: 262144
+    tags: [balanced, agentic, long-context, multilingual, vision]
+    strengths:
+      - General-purpose Kimi with thinking or non-thinking mode
+      - Text, image and video input; tool calls and JSON mode
+      - Cheapest live Kimi id -- the fan-out rung and HAPPI default for the family
+    description: >
+      Moonshot's Kimi K2.6 (catalogued 2026-09-07; live on GET /v1/models).
+      Metered dev API (keychain:grip-moonshot). Temperature locked (1.0 thinking /
+      0.6 non-thinking), top_p/n/penalties fixed, tool_choice=required rejected.
+      $0.95 in / $4.00 out / $0.16 cache-hit per MTok (pricing/chat-k26.md).
+
+  # ────────────────────────────────────────────────────────────────
+  # CHEAP TIER (high-volume, low cost)
+  # ────────────────────────────────────────────────────────────────
+
+  # replaced groq/llama-3.3-70b-versatile → groq/qwen/qwen3.8-27b (2026-08-30: llama-3.3 retired at Groq)
+  - address: groq/qwen/qwen3.8-27b
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 1000000
+    tags: [fast, open, reasoning]
+    strengths:
+      - Fastest Qwen inference available (Groq LPU hardware)
+      - Current-generation reasoning MoE from Alibaba
+      - Great default for routing, drafting, classification
+    description: >
+      Qwen 3.8 27B served on Groq's custom inference hardware.
+      Latency-leader for the price tier — typically returns full
+      responses faster than mid-tier cloud models start streaming.
+
+  # replaced groq/llama-4-scout → groq/openai/gpt-oss-20b (2026-08-30: scout retired at Groq; no vision chat model remains on the Groq roster)
+  - address: groq/openai/gpt-oss-20b
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 131072
+    tags: [fast, open, mixture-of-experts]
+    strengths:
+      - GPT-OSS 20B — open-weight MoE from OpenAI
+      - Groq inference speed at the cheapest price point
+      - Affordable fast path for simple turns
+    description: >
+      The smaller GPT-OSS served by Groq. Best when you want fast
+      inference without paying mid-tier pricing.
+      Note: Groq no longer serves a vision chat model (2026-08-30).
+
+  - address: groq/openai/gpt-oss-120b
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 131072
+    tags: [fast, reasoning, open]
+    strengths:
+      - OpenAI's open-weight GPT-OSS 120B MoE at Groq speed (~500 tps)
+      - Good fit for thinking-mode prompts under latency pressure
+    description: >
+      OpenAI's open-weight GPT-OSS 120B served by Groq. Replaces the
+      qwen3-32b preview slot (GroqCloud decommission 2026-07-17) — a
+      production model with a 131K context window and high throughput.
+
+  # groq/qwen/qwen3.6-27b removed 2026-11-24: Groq answers 404 model_not_found.
+  # Its served sibling is groq/qwen/qwen3.8-27b, above.
+
+  # GLM-5.3-Flash, onboarded 2026-11-24 through /dogfood-domain: was already listed in
+  # providers.yaml's zhipu models with no catalogue or cost row; both are filled here.
+  # docs.z.ai/guides/llm/glm-5.3-flash.md and docs.z.ai/guides/overview/pricing.md, read
+  # 2026-11-24.
+  - address: zhipu/glm-5.3-flash
+    tier: cheap
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [cheap, long-context, reasoning, coding, multimodal, china-hosted]
+    strengths:
+      - The first native multimodal model in the GLM-5 series (vendor's description) -- image/video/file input built into the coding loop
+      - 320B total / 18B activated params; sparse+linear attention cuts attention compute and KV cache 3.01x / 4.44x versus GLM-5.3
+      - $0.15 in / $0.03 cache-hit / $0.50 out per MTok -- cheapest Zhipu row in this file
+    description: >
+      Z.ai's cheap, natively multimodal workhorse. 1M context, 128K max output.
+      thinking.type only supports "enabled" -- reasoning cannot be disabled; reasoning_effort
+      is low/high/max (default max). Priced by its own row in lib/hal/cost_tracker.py and
+      config/model_prices.yaml, never glm-5's.
+
+  - address: openrouter/meta-llama/llama-4-maverick
+    tier: cheap
+    paid: true
+    modality: text+vision
+    context_window: 256000
+    tags: [open, vision, large]
+    strengths:
+      - Meta's Llama 4 Maverick — bigger MoE than Scout
+      - Long context (256K) at affordable per-token pricing
+    description: >
+      The larger Llama 4 MoE. Best when you need more capability
+      than Scout but still want to stay in the cheap tier.
+
+  - address: qwen/qwen3.5-flash
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 128000
+    tags: [fast, multilingual, cheap]
+    strengths:
+      - Cheap, fast Alibaba model with strong CJK coverage
+      - Fits the "cheap" rung of HAL's tier_chain by default
+    description: >
+      Alibaba's flash-tier model — pick for high-volume jobs,
+      especially anything that touches Chinese, Japanese, or
+      Korean content.
+
+  - address: qwen/qwen3.5-plus
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 128000
+    tags: [balanced, multilingual]
+    strengths:
+      - Step up from Flash without crossing into premium pricing
+      - Good fit for production assistants
+    description: >
+      Qwen 3.5 Plus. Worth the small premium over Flash for
+      assistant-style workloads where quality matters.
+
+  # replaced deepseek-chat → deepseek-v4-flash (2026-08-30: chat retired upstream); renamed
+  # deepseek-v4-flash → deepseek-flash (2026-10-26: the vendor renamed flash to
+  # deepseek-flash, now text+vision, absorbing deepseek-v4-flash-vision-exp).
+  - address: deepseek/deepseek-flash
+    tier: cheap
+    paid: true
+    modality: text+vision
+    context_window: 1048576
+    tags: [open, balanced, coding, vision]
+    strengths:
+      - Cheapest path to DeepSeek's current v4 line
+      - Strong coding and reasoning capability for the price
+      - Text + image input (absorbs the retired deepseek-v4-flash-vision-exp)
+    description: >
+      DeepSeek's fast model, renamed deepseek-flash. The price-quality
+      ratio is excellent — try it before reaching for any
+      mid-tier alternative.
+
+  - address: zhipu/glm-4.6
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 128000
+    tags: [coding, multilingual, cheap]
+    strengths:
+      - GLM 4.6 — strong coding model at a low price
+      - Bilingual (CN/EN) capability
+    description: >
+      Zhipu's previous-generation coding workhorse. Use as the
+      cheap default for code-generation tasks.
+
+  - address: zhipu/glm-4.5-air
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 128000
+    tags: [fast, cheap]
+    strengths:
+      - The lightest GLM tier — fast and inexpensive
+      - Fine for classification, routing, summaries
+    description: >
+      Pick GLM Air when latency and cost dominate quality
+      requirements.
+
+  - address: mistral/mistral-small-latest
+    tier: cheap
+    paid: true
+    modality: text
+    context_window: 128000
+    tags: [open, fast, multilingual]
+    strengths:
+      - Mistral's small tier — fast European-hosted option
+      - Solid French and other European-language quality
+    description: >
+      Useful when you want non-US-non-Chinese model provenance
+      or strong European-language coverage.
+
+  - address: mistral/mistral-small-2603
+    tier: cheap
+    paid: true
+    modality: text+vision
+    context_window: 256000
+    tags: [cheap, open-weight, multimodal, value]
+    strengths:
+      - Mistral Small 4 — 119B total / 6.5B active MoE, Apache-2.0 weights
+      - Unified multimodal (text/image) at budget price ($0.15 / $0.60 per Mtok)
+    description: >
+      Parity row with GRIP's config/model_catalog.yaml (/dogfood-domain,
+      2026-11-24). Weights at huggingface.co/mistralai/Mistral-Small-4-2603.
+      No published cached-input discount.
+
+  - address: mistral/mistral-large-4
+    tier: premium
+    paid: true
+    modality: text+vision
+    context_window: 1000000
+    tags: [premium, reasoning, coding, vision, agentic]
+    strengths:
+      - 1.05T total / 52B active MoE, with a 1.6B vision encoder
+      - 1M-token context, the longest Mistral offers
+      - Reasoning output mode, function-calling, document QnA, agents/connectors
+    description: >
+      Mistral's new flagship (public preview 2026-10-06; open weights at
+      huggingface.co/mistralai/Mistral-Large-4-1T-A52B under the Mistral
+      Ecosystem Open-Weight licence, not Apache-2.0). Parity row with GRIP's
+      config/model_catalog.yaml (/dogfood-domain, 2026-11-24); see that row
+      for the deprecated-sibling and alias notes. Not GRIP's flagship pin for
+      the family. Weakness: no published maximum-output-tokens figure;
+      priced above every other Mistral text model.
+
+  # ────────────────────────────────────────────────────────────────
+  # LOCAL TIER (runs on your hardware, no network egress)
+  # ────────────────────────────────────────────────────────────────
+
+  - address: ollama/gemma4:26b
+    tier: local
+    paid: false
+    modality: multimodal
+    context_window: 256000
+    tags: [local, multimodal, mixture-of-experts, frontier-local]
+    strengths:
+      - Frontier-class open model running locally via Ollama
+      - 256K context window, multimodal input
+      - 4B active params, 26B total — fast on consumer GPUs
+      - Zero egress, zero per-request cost
+    description: >
+      The flagship local model. Pulls down via `ollama pull gemma4:26b`,
+      then runs on your machine — no API key, no rate limits, no
+      data leaving your network. Best local default.
+
+  - address: ollama/gemma4:e4b
+    tier: local
+    paid: false
+    modality: text
+    context_window: 128000
+    tags: [local, fast, small]
+    strengths:
+      - Small Gemma 4 variant for laptops and edge devices
+      - Sub-second responses on Apple Silicon
+    description: >
+      The small Gemma 4 — pick when the larger variant won't fit
+      in memory or you need maximum throughput.
+
+  - address: mlx_vlm/auto
+    tier: local
+    paid: false
+    modality: multimodal
+    context_window: 128000
+    tags: [local, vision, audio, ocr, apple-silicon]
+    strengths:
+      - Vision, audio, OCR, object detection, segmentation
+      - Apple Silicon-optimised via MLX
+      - Supports Gemma 4, Qwen2/3-VL, Phi-4-Vision, Falcon-OCR,
+        Granite-Vision, SAM 3.1, RF-DETR
+    description: >
+      The local multimodal swiss army knife. Start with
+      `python -m mlx_vlm.server --port 8080`, then HAL auto-discovers
+      whichever model you've loaded. Best path for vision/audio
+      work that must stay on-device.
+
+  - address: microsoft/bitnet-b1.58-2b-4t
+    tier: local
+    paid: false
+    modality: text
+    context_window: 4096
+    tags: [local, fast, small, edge, ternary-weights]
+    strengths:
+      - 1.58-bit ternary weights — multiply becomes add, ~3× less compute per token
+      - 2.4B parameter model fits in ~1 GB RAM
+      - Designed for edge/CPU inference with minimal hardware requirements
+      - Zero egress, zero per-request cost
+    description: >
+      BitNet b1.58 quantises every weight to {-1, 0, +1} (1.58-bit ternary),
+      replacing matrix multiplications with additions. This orthogonal compression
+      axis stacks with gridlm's sparsity-based expert routing: BitNet reduces
+      per-operation cost while the lattice routes only to the capable expert.
+      Run via `python -m bitnet` or any GGUF-compatible runtime.
+      Best for CPU-only or memory-constrained edge deployments.
+
+  - address: lmstudio/auto
+    tier: local
+    paid: false
+    modality: text
+    context_window: 128000
+    tags: [local, gui, easy-setup]
+    strengths:
+      - Friendly GUI for managing local models
+      - Auto-discovered by HAL when LM Studio's server is on
+    description: >
+      Start LM Studio's local server (default port 1234) and HAL
+      will route to whichever model you have loaded. Best on-ramp
+      for users new to local inference.
+
+  - address: lemonade/auto
+    tier: local
+    paid: false
+    modality: text
+    context_window: 128000
+    tags: [local, amd, npu]
+    strengths:
+      - AMD's local inference stack with NPU acceleration
+      - HAL auto-discovers when the server is reachable
+    description: >
+      AMD-friendly local inference. Pick when you have AMD hardware
+      (Ryzen AI NPU, Radeon GPU) and want acceleration tailored to it.
+
+  - address: vllm/auto
+    tier: local
+    paid: false
+    modality: text
+    context_window: 128000
+    tags: [local, server, batched]
+    strengths:
+      - High-throughput batched inference
+      - Best for serving the same model to many users at once
+    description: >
+      Run any HuggingFace model under vLLM for batched, high-throughput
+      local serving. Heavier setup than Ollama but better at scale.
+
+  - address: xai/grok-4.5
+    tier: frontier
+    paid: true
+    modality: text
+    context_window: 500000
+    tags: [frontier, reasoning, coding, long-context]
+    strengths:
+      - xAI flagship line; aliases include grok-build-latest (the Grok Build CLI's engine)
+      - 500K context, live-read from api.x.ai/v1/models (2026-07-17)
+    description: >
+      xAI Grok 4.5, added after the grok-3 outage class (grok-3 retired
+      at the provider; the old catalogue-absent alias broke /frontier).
+      Model id, aliases, and context length were read live from
+      api.x.ai/v1/models on 2026-07-17, never hand-copied from marketing.
+      Long-context pricing tier starts at 200K tokens.
+
+  - address: xai/grok-4.20-0309-reasoning
+    tier: frontier
+    paid: true
+    modality: text
+    context_window: 1000000
+    tags: [frontier, reasoning, long-context]
+    strengths:
+      - Reasoning variant of the Grok 4.20 line, 1M context
+      - Alias family includes grok-4.20 and grok-4.20-reasoning-latest
+    description: >
+      xAI's reasoning-mode Grok 4.20 (id and 1M context length live-read
+      from api.x.ai/v1/models, 2026-07-17). Pick when you want the xAI
+      provider specifically for chain-of-thought work. Long-context
+      pricing tier starts at 200K tokens. Already listed in this file's own
+      `premium` routing tier below; had no price row until 2026-11-24
+      (dogfood-domain family 5) -- a latent gap, since this id was reachable
+      and unpriced at the same time.
+
+  # PARITY (2026-11-24, dogfood-domain family 5): already in this provider's
+  # `models:` list and already called by GRIP's lib/broly_council.py and
+  # lib/council_seat.py (the broly explorer/devil roles, and the "grok-3"
+  # fallback address); this catalogue row and its cost row were the missing
+  # half.
+  - address: xai/grok-4.20-0309-non-reasoning
+    tier: frontier
+    paid: true
+    modality: text
+    context_window: 1000000
+    tags: [frontier, fast, long-context]
+    strengths:
+      - Non-reasoning variant of the Grok 4.20 line -- no hidden thinking tokens
+      - 1M context, same per-token price as grok-4.3
+      - Already in production use for GRIP's broly explorer/devil roles
+    description: >
+      xAI's non-reasoning Grok 4.20 (vendor data embedded in docs.x.ai/
+      developers/models/grok-4.7, read 2026-11-24: functionCalling and
+      structuredOutputs only, no reasoning effort levels). Long-context
+      pricing tier starts at 200K tokens.
+
+  # NEW (2026-11-24, dogfood-domain family 5, flagship pick). Released
+  # 2026-09-21 (docs.x.ai/developers/release-notes, read 2026-11-24, verbatim:
+  # "Grok 4.7, SpaceXSI's frontier model for coding, agentic tasks, and
+  # knowledge work, is now available on the xAI API as grok-4.7. It has a
+  # 500k context window, text and image inputs with text-only output, and no
+  # text output limit. Pricing is $2 / $0.50 / $6 per 1M tokens (input /
+  # cached input / output) below 200k prompt tokens, and $4 / $1 / $12
+  # above."). On the Responses API it always returns reasoning.encrypted_
+  # content, even when `include` does not list it.
+  - address: xai/grok-4.7
+    tier: frontier
+    paid: true
+    modality: text+vision
+    context_window: 500000
+    tags: [frontier, reasoning, coding, agentic]
+    strengths:
+      - xAI's newest frontier model (released 2026-09-21); coding, agentic tasks, knowledge work
+      - Reasoning effort low/medium/high (default)/xhigh; no output token limit
+      - Same per-token price as grok-4.5 and grok-4.6 ($2/$0.50/$6 under 200K)
+    description: >
+      xAI's newest model as of this onboarding. Appended last in
+      config/providers.yaml and config/providers.windows.yaml so it cannot
+      capture a routing shortcut that used to mean an older model. 500K
+      context; long-context pricing starts at 200K prompt tokens.
+
+# Tag glossary (for filter UX):
+#   frontier         cutting-edge quality
+#   reasoning        chain-of-thought, math, proofs
+#   coding           strong on code generation/review
+#   vision           accepts images
+#   multimodal       text + image + audio (+ video)
+#   long-context     >= 200K tokens
+#   fast             low time-to-first-token
+#   open             open weights
+#   multilingual     strong non-English coverage
+#   local            runs on user's hardware
+#   creative         strong on writing, story, ideation

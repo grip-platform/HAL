@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""happi — HAPPI polyglot document CLI (format-side tooling).
+
+Subcommands:
+    extract <label> <file>   Print one labelled fenced block to stdout
+    labels <file>            List labels present in a document
+    prose <file>             Print the non-fenced prose text
+
+Exit codes:
+    0  success
+    1  I/O error (file missing, unreadable)
+    2  missing label in `extract`
+    3  malformed invocation
+
+Sibling: `hal --happi-api` (runtime-side stdio envelope dispatcher). This
+tool operates on HAPPI .md files before they reach any runtime.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+# Running from anywhere on PATH should still find the lib/ package.
+_HAL_ROOT = Path(__file__).resolve().parent.parent
+if str(_HAL_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HAL_ROOT))
+
+from lib.hal.happi.parser import parse_happi_file  # noqa: E402
+
+
+def cmd_extract(args: argparse.Namespace) -> int:
+    doc = parse_happi_file(args.file)
+    block = doc.get_first(args.label)
+    if block is None:
+        present = ", ".join(l for l in doc.labels_present() if l) or "(none)"
+        sys.stderr.write(
+            f"happi: no block with label {args.label!r} in {args.file}\n"
+            f"       labels present: {present}\n"
+        )
+        return 2
+    print(block)
+    return 0
+
+
+def cmd_labels(args: argparse.Namespace) -> int:
+    doc = parse_happi_file(args.file)
+    for label in doc.labels_present():
+        if label:
+            print(label)
+    return 0
+
+
+def cmd_prose(args: argparse.Namespace) -> int:
+    doc = parse_happi_file(args.file)
+    print(doc.prose)
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="happi",
+        description="HAPPI polyglot document tool (format-side)",
+    )
+    sub = ap.add_subparsers(dest="command", required=True)
+
+    pe = sub.add_parser("extract", help="Print one labelled block to stdout")
+    pe.add_argument("label", help="Block label, e.g. yaml-openapi, bash-bootstrap")
+    pe.add_argument("file", help="HAPPI .md document path")
+    pe.set_defaults(func=cmd_extract)
+
+    pl = sub.add_parser("labels", help="List labels present in a document")
+    pl.add_argument("file", help="HAPPI .md document path")
+    pl.set_defaults(func=cmd_labels)
+
+    pp = sub.add_parser("prose", help="Print document prose (non-fenced text)")
+    pp.add_argument("file", help="HAPPI .md document path")
+    pp.set_defaults(func=cmd_prose)
+
+    return ap
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
+    try:
+        return int(args.func(args))
+    except FileNotFoundError as exc:
+        sys.stderr.write(f"happi: {exc}\n")
+        return 1
+    except OSError as exc:
+        sys.stderr.write(f"happi: {exc}\n")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

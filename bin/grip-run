@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# grip-run — execute a command with GRIP_* env vars populated from
+# the encrypted ~/.hal/.env.enc vault.
+#
+# Usage:
+#   grip-run <cmd> [args...]
+#
+# Examples:
+#   grip-run hal --happi-api                  # HAPPI runtime with all keys
+#   grip-run python my_script.py              # Python script with env
+#   grip-run env                              # dump all env vars (debug)
+#   grip-run bash -c 'echo $GRIP_CLAUDE_OAUTH'  # verify a specific key
+#
+# The decrypted env lives only in the exec'd child process. Parent shell
+# is untouched. Returns the child's exit code.
+
+set -euo pipefail
+
+if [[ "$#" -eq 0 ]]; then
+    echo "grip-run: usage: grip-run <cmd> [args...]" >&2
+    exit 2
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Source exports into the current subshell; process substitution keeps
+# plaintext off disk even during this transient window.
+# shellcheck disable=SC1090
+source <("$SCRIPT_DIR/grip-env")
+
+exec "$@"

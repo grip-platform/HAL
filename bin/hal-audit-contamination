@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""hal-audit-contamination — mark the gateway audit rows that are not real traffic.
+
+WHY THIS EXISTS
+    The test suite used to write into the live ``~/.hal/logs/gateway-audit.jsonl``
+    (fixed in ``tests/conftest.py``), and the ``/v1/messages`` witness labelled
+    every non-Anthropic model it served as a failover (fixed in
+    ``lib/hal/gateway.py``). Both left rows in the live log that a reader would
+    take as evidence: 133 ``failover`` events, every one of them from a test.
+
+    This writes a manifest of those rows. It NEVER modifies the log: rows are
+    evidence, and the manifest is an index a reader can subtract, keyed by line
+    number and by the SHA-256 of the line, so it can be checked against the file.
+
+THE RULE (derived from the 2026-10-05 live log, and from one measured full-suite
+run, which wrote 35 audit rows of exactly these shapes)
+    fixture-upstream
+        A failover-layer row (``served``, ``failover`` or ``unreachable``)
+        naming one of the tests' fake upstreams (``a``, ``b``, ``primary``,
+        ``secondary``) with ``latency_ms == 0``. Production upstreams are named
+        ``anthropic-primary`` and ``anthropic-fallback``
+        (``gateway_failover._specs_from_env``), and a real upstream call is never
+        instant.
+    fixture-witness
+        A ``gateway.chat.witness`` row with ``latency_ms == 0`` and status 200 or
+        429. Every witness call site measures from handler entry, and on every
+        witnessed path but one the reply follows a network round trip. The one
+        exception is the 501 the gateway composes when a provider has no
+        token-count endpoint, which this does not match.
+    mislabelled-failed-over
+        A ``gateway.chat.witness`` row on ``/v1/messages`` with ``failed_over``
+        true. That rail never knew about failover: it set the flag whenever the
+        requested model belonged to a non-Anthropic provider. The row is real
+        traffic with one wrong field.
+
+    bin/hal-audit-contamination [--audit PATH] [--out PATH] [--force]
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import hashlib
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+FIXTURE_UPSTREAMS = frozenset({"a", "b", "primary", "secondary"})
+_FAILOVER_LAYER = frozenset({"served", "failover", "unreachable"})
+_WITNESS = "gateway.chat.witness"
+_FIXTURE_WITNESS_STATUSES = frozenset({200, 429})
+_MESSAGES_PATH = "/v1/messages"
+
+RULE = {
+    "fixture-upstream": "event in served/failover/unreachable, upstream in "
+                        "a/b/primary/secondary, latency_ms == 0",
+    "fixture-witness": "event gateway.chat.witness, latency_ms == 0, status 200 or 429",
+    "mislabelled-failed-over": "event gateway.chat.witness, path /v1/messages, "
+                               "failed_over true (and not a fixture row)",
+}
+
+
+def default_audit() -> Path:
+    """The live audit log, resolved the way the gateway's own sink resolves it."""
+    home = Path(os.environ.get("HAL_HOME", str(Path.home() / ".hal")))
+    return home / "logs" / "gateway-audit.jsonl"
+
+
+def classify(row: dict) -> Optional[str]:
+    """The contamination reason for one audit row, or ``None`` for a clean row."""
+    event = row.get("event")
+    instant = row.get("latency_ms") == 0
+    if event in _FAILOVER_LAYER:
+        fixture = instant and row.get("upstream") in FIXTURE_UPSTREAMS
+        return "fixture-upstream" if fixture else None
+    if event != _WITNESS:
+        return None
+    if instant and row.get("status") in _FIXTURE_WITNESS_STATUSES:
+        return "fixture-witness"
+    if row.get("failed_over") is True and row.get("path") == _MESSAGES_PATH:
+        return "mislabelled-failed-over"
+    return None
+
+
+def _entry(number: int, raw: bytes) -> Optional[dict]:
+    """A manifest entry for one raw line, or ``None`` if it is clean or unreadable."""
+    line = raw.rstrip(b"\n")
+    try:
+        row = json.loads(line)
+    except ValueError:
+        return None
+    reason = classify(row) if isinstance(row, dict) else None
+    if reason is None:
+        return None
+    return {"line": number, "sha256": hashlib.sha256(line).hexdigest(),
+            "event": row.get("event"), "reason": reason}
+
+
+def scan(audit: Path) -> dict:
+    """Read ``audit`` once and build the manifest. Opens the file read-only."""
+    rows, lines = [], 0
+    with audit.open("rb") as fh:
+        for lines, raw in enumerate(fh, 1):
+            entry = _entry(lines, raw)
+            if entry:
+                rows.append(entry)
+    counts: dict = collections.defaultdict(collections.Counter)
+    for entry in rows:
+        counts[entry["reason"]][entry["event"]] += 1
+    return {
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "audit": str(audit),
+        "lines_scanned": lines,
+        "rule": RULE,
+        "sha256_of": "each line's bytes without its trailing newline",
+        "counts": {reason: dict(by_event) for reason, by_event in counts.items()},
+        "rows": rows,
+    }
+
+
+def main(argv: Optional[list] = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--audit", type=Path, default=None,
+                    help="audit log to scan (default: $HAL_HOME/logs/gateway-audit.jsonl)")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="manifest path (default: <audit>.contamination.json)")
+    ap.add_argument("--force", action="store_true", help="overwrite an existing manifest")
+    args = ap.parse_args(argv)
+    audit = args.audit or default_audit()
+    out = args.out or audit.with_name(audit.name + ".contamination.json")
+    if out.exists() and not args.force:
+        print(f"refusing: {out} exists (pass --force to overwrite)", file=sys.stderr)
+        return 1
+    manifest = scan(audit)
+    out.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    print(f"scanned {manifest['lines_scanned']} lines of {audit}")
+    for reason, by_event in sorted(manifest["counts"].items()):
+        print(f"  {reason}: {sum(by_event.values())}  {by_event}")
+    print(f"manifest: {out} ({len(manifest['rows'])} rows flagged)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

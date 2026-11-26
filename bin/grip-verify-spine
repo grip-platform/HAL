@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""grip-verify-spine — verify the HMAC chain of the signed /v1/messages witness log.
+
+Exit 0 on PASS (or no signed rows yet).  Exit 1 on TAMPERED.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+# Resolve HAL home: HAL_HOME env wins (same as gateway_witness._hal_home).
+_HAL_HOME = Path(os.environ.get("HAL_HOME", str(Path.home() / ".hal")))
+
+# Add the HAL repo root to sys.path so lib.hal.* resolves from any cwd.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+
+def _load_key(key_path: Path) -> bytes:
+    return key_path.read_bytes()
+
+
+def main() -> int:
+    from lib.hal.gateway_witness import signed_key_path, signed_log_path
+    from lib.hal.voice.audit import verify_chain
+
+    log_path = signed_log_path()
+    key_path = signed_key_path()
+
+    if not log_path.exists() or log_path.stat().st_size == 0:
+        print("PASS — no signed rows yet")
+        return 0
+
+    if not key_path.exists():
+        print("FAIL — signed log exists but key is missing", file=sys.stderr)
+        return 1
+
+    key = _load_key(key_path)
+    ok, bad_line = verify_chain(log_path, key)
+    if ok:
+        # Count rows for informational output.
+        rows = [ln for ln in log_path.read_text().splitlines() if ln.strip()]
+        print(f"PASS — {len(rows)} signed row(s) verified ({log_path})")
+        return 0
+    else:
+        print(f"FAIL — chain broken at line {bad_line} ({log_path})", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
