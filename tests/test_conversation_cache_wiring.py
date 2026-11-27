@@ -59,14 +59,19 @@ def _make_dispatch_response(model: str = "groq/llama-3.3-70b-versatile", text: s
 
 
 class _SemanticCacheEnv:
-    """Context manager that sets HAL_SEMANTIC_CACHE deterministically."""
+    """Sets HAL_SEMANTIC_CACHE deterministically, with no judge, and restores both after.
+
+    Clearing HAL_SEMANTIC_CACHE_JUDGE keeps these tests hermetic: with a judge set in the
+    caller's environment, the cache would call the local Ollama daemon.
+    """
 
     def __init__(self, value: str | None):
         self.value = value
-        self._prev: str | None = None
+        self._patch = patch.dict(os.environ)
 
     def __enter__(self):
-        self._prev = os.environ.get("HAL_SEMANTIC_CACHE")
+        self._patch.start()
+        os.environ.pop("HAL_SEMANTIC_CACHE_JUDGE", None)
         if self.value is None:
             os.environ.pop("HAL_SEMANTIC_CACHE", None)
         else:
@@ -74,10 +79,7 @@ class _SemanticCacheEnv:
         return self
 
     def __exit__(self, *_):
-        if self._prev is None:
-            os.environ.pop("HAL_SEMANTIC_CACHE", None)
-        else:
-            os.environ["HAL_SEMANTIC_CACHE"] = self._prev
+        self._patch.stop()
 
 
 def _patched_conv(registry):
@@ -139,6 +141,16 @@ class TestCacheFactory(unittest.TestCase):
             self.assertIsNone(_maybe_build_semantic_cache())
         with _SemanticCacheEnv("0"):
             self.assertIsNone(_maybe_build_semantic_cache())
+
+    def test_no_judge_means_no_verifier(self):
+        with _SemanticCacheEnv("1"):
+            self.assertIsNone(_maybe_build_semantic_cache().stats()["verifier"])
+
+    def test_a_judge_model_adds_a_local_verifier_and_warms_it(self):
+        with _SemanticCacheEnv("1"), patch.object(_conv.OllamaVerifier, "start_warm") as start_warm:
+            os.environ["HAL_SEMANTIC_CACHE_JUDGE"] = " qwen3:8b "
+            self.assertEqual(_maybe_build_semantic_cache().stats()["verifier"], "ollama:qwen3:8b")
+        start_warm.assert_called_once_with()
 
 
 class TestSemanticCacheWiring(unittest.TestCase):

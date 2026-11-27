@@ -757,7 +757,8 @@ def test_the_store_account_does_not_spell_out_the_home_path(home):
 _NODE_CLIENT = r"""
 const tls = require('tls');
 const [port, servername] = process.argv.slice(1);
-const say = (verdict) => { console.log(JSON.stringify(verdict)); process.exit(0); };
+const about = {node: process.version, openssl: process.versions.openssl};
+const say = (verdict) => { console.log(JSON.stringify({...verdict, ...about})); process.exit(0); };
 const s = tls.connect({host: '127.0.0.1', port: Number(port), servername},
                       () => say({ok: s.authorized}));
 s.on('error', (e) => say({ok: false, code: e.code}));
@@ -782,12 +783,17 @@ def test_node_trusts_the_ca_for_the_constrained_host_only(home):
     """Claude Code runs on Bun, which this suite cannot drive; Node reads the same
     NODE_EXTRA_CA_CERTS. The live check is GRIP's ``grip-wire-probe --arm intercept``."""
     ca = wire_ca.load_or_create()
+    # Each assertion shows Node's verdict, its refusal code and its Node and OpenSSL
+    # versions, so a failure on a CI runner says why from its one-line summary.
     good = wire_ca.server_context(ca.mint_leaf())
-    assert _node(_serve_once(good), CONSTRAINED_HOST, wire_ca.ca_cert_path())["ok"]
+    verdict = _node(_serve_once(good), CONSTRAINED_HOST, wire_ca.ca_cert_path())
+    assert verdict["ok"], verdict
     good = wire_ca.server_context(ca.mint_leaf())
-    assert not _node(_serve_once(good), CONSTRAINED_HOST, None)["ok"]
+    verdict = _node(_serve_once(good), CONSTRAINED_HOST, None)
+    assert not verdict["ok"], verdict
     forged = wire_ca.server_context(wire_ca._sign_leaf(ca, "example.com"))
-    assert not _node(_serve_once(forged), "example.com", wire_ca.ca_cert_path())["ok"]
+    verdict = _node(_serve_once(forged), "example.com", wire_ca.ca_cert_path())
+    assert not verdict["ok"], verdict
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

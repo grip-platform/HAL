@@ -30,6 +30,7 @@ from lib.hal.pipeline import (
     ContextStage, DispatchStage, RecordStage,
 )
 from lib.hal.attribution import AttributionReport, InputAttributor
+from lib.hal.cache_verifier import OllamaVerifier
 from lib.hal.registry import ProviderRegistry, get_registry
 from lib.hal.semantic_cache import SemanticCache
 from lib.hal.sentinel import LimitSentinel
@@ -58,12 +59,22 @@ def _count_kono_entries(formatted: str) -> int:
 def _maybe_build_semantic_cache() -> Optional[SemanticCache]:
     """Instantiate a SemanticCache when ``HAL_SEMANTIC_CACHE=1``, else None.
 
-    Env-flag lives here rather than inside SemanticCache so tests can drive
-    the cache deterministically without touching the environment.
+    ``HAL_SEMANTIC_CACHE_JUDGE`` names a local Ollama chat model (measured for HAL#965:
+    ``qwen3:8b``). When it is set, a prompt in other words can hit too, but only when that
+    model confirms it is the same request; unset, only the same request in the same words
+    hits. The model and nomic-embed-text must already be pulled (``ollama pull qwen3:8b``):
+    a missing model makes every judge call fail closed, so only same-words hits remain.
+    Env-flags live here rather than inside SemanticCache so tests can drive the cache
+    deterministically without touching the environment.
     """
     if os.environ.get("HAL_SEMANTIC_CACHE") != "1":
         return None
-    return SemanticCache()
+    judge_model = os.environ.get("HAL_SEMANTIC_CACHE_JUDGE", "").strip()
+    if not judge_model:
+        return SemanticCache()
+    verifier = OllamaVerifier(judge_model)
+    verifier.start_warm()  # load both models now, so the first lookup is not the one that waits
+    return SemanticCache(verifier=verifier)
 
 
 class Conversation:

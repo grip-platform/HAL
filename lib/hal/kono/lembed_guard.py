@@ -28,8 +28,9 @@ Design
 * Three independent signals; any one triggers the guard.
 
 The guard is intentionally conservative. A caller that trips it should
-degrade to the bag-of-words embedder (already present in
-``lib/hal/semantic_cache.py``) rather than attempting the lembed call.
+skip the lembed call and do without that embedding, rather than attempting
+it. (The semantic response cache once fell back to a bag-of-words embedder
+here; since HAL#965 it no longer embeds through this path at all.)
 """
 from __future__ import annotations
 
@@ -96,6 +97,6 @@ def _max_repeat_run(text: str) -> int:
 
 
 class LembedInputTooRisky(ValueError):
-    """Raised when input trips the guard. Callers should fall back to
-    bag-of-words or another embedder backend.
+    """Raised when input trips the guard. Callers should skip the lembed call
+    and do without that embedding, or use another embedder backend.
     """

@@ -1,18 +1,43 @@
-"""Tests for Phase α W3 semantic response cache + H-SCACHE harness."""
+"""Tests for the semantic response cache: one answer per request, never a near-miss (HAL#965)."""
 from __future__ import annotations
 
-import math
-import time
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
-from lib.hal.semantic_cache import (
-    CacheLookup,
-    HashedBagOfWordsEmbedder,
-    SemanticCache,
-    SemanticCacheEntry,
-    _default_embedder,
-    cosine_similarity,
-)
+from lib.hal.prompt_equivalence import canonical_form, equivalent, normalise, structural_difference
+from lib.hal.semantic_cache import CacheLookup, SemanticCache
+
+REPO = Path(__file__).resolve().parents[1]
+
+# HAL#965's near-miss pairs: shared words, a different right answer. Under the old cosine
+# design, nomic-embed-text returned a wrong answer for 6 of these at 0.92, and the hashed
+# bag-of-words fallback for 2 or 3. Each must now miss.
+NEAR_MISSES = [
+    ("How do I restart the HAL gateway?", "How do I stop the HAL gateway?"),
+    ("Show me the first 20 lines of the server log", "Show me the last 20 lines of the server log"),
+    ("List all open pull requests in the repo", "List all closed pull requests in the repo"),
+    ("Convert this JSON file to YAML", "Convert this YAML file to JSON"),
+    ("How much disk space is left on this machine?", "How much memory is left on this machine?"),
+    ("What is the default timeout for provider calls?", "What is the maximum timeout for provider calls?"),
+    ("Write a Python function that reverses a string", "Write a Python function that reverses a list"),
+    ("How do I undo my last git commit but keep the changes?",
+     "How do I undo my last git commit and discard the changes?"),
+    ("Which port does the HAL gateway listen on?", "Which port does the HAL server listen on?"),
+    ("Translate 'good morning' into French", "Translate 'good morning' into German"),
+    ("What time is it in Tokyo right now?", "What time is it in London right now?"),
+    ("Rename the variable foo to bar in this file", "Rename the variable bar to foo in this file"),
+    ("Add a test for the timeout guard", "Remove the test for the timeout guard"),
+    ("Is the build passing on main?", "Is the build failing on main?"),
+    ("Merge pull request 123", "Close pull request 123"),
+    ("Count the lines of code in the lib folder", "Count the lines of code in the tests folder"),
+    ("Increase the cache TTL to 600 seconds", "Decrease the cache TTL to 60 seconds"),
+    ("Explain how to enable the semantic cache", "Explain how to disable the semantic cache"),
+    ("Summarise the changes in the last commit", "Summarise the changes in the first commit"),
+    ("Delete the temporary files in the scratch folder", "List the temporary files in the scratch folder"),
+]
 
 
 class _FakeClock:
@@ -26,269 +51,363 @@ class _FakeClock:
         return self.t
 
 
-class _FixedEmbedder:
-    """Deterministic embedder for unit tests — returns a canned vector per input."""
+class TestCanonicalForm(unittest.TestCase):
+    def test_only_identical_text_is_equivalent(self):
+        self.assertTrue(equivalent("What is Python?", "What is Python?"))
+        self.assertTrue(equivalent("  indented\n", "  indented\n"))
 
-    def __init__(self, mapping: dict[str, list[float]]):
-        self._mapping = {}
-        for k, v in mapping.items():
-            norm = math.sqrt(sum(x * x for x in v)) or 1.0
-            self._mapping[k] = [x / norm for x in v]
+    def test_every_difference_inside_a_prompt_counts(self):
+        pairs = [
+            ("What is Python?", "what is python?"),                         # case
+            ("Open Foo.py", "Open foo.py"),                                 # case naming a file
+            ("Open fooBar.py", "Open foobar.py"),                           # case after the first letter
+            ("Explain a bug", "Explain the bug"),                           # article
+            ('Search for "red blue" green', 'Search for red "blue green"'),  # quote position
+            ("print('x')", "print(x)"),                                     # quotes in code
+            ("show rows where x != 5", "show rows where x = 5"),            # operator
+            ("swap a and b", "swap and b"),                                 # a bare identifier
+            ("Restart the gateway!", "Restart the gateway?"),               # command or question
+            ("What is 10\u00b2?", "What is 102?"),                          # NFKC would merge these
+            ("Email me the report", "Email the report"),                    # who it goes to
+            ("if x:\n    a()\n    b()", "if x:\n    a()\nb()"),             # indentation in code
+            ("    print('x')", "print('x')"),                               # indentation of one line
+            ("  What is Python?\n", "What is Python?"),                     # whitespace at the ends
+            ('len("\u00e9")', 'len("e\u0301")'),                            # Unicode encoding: 1 against 2
+            ("Don't merge it", "Do not merge it"),                          # other words: the judge's call
+        ]
+        for a, b in pairs:
+            self.assertFalse(equivalent(a, b), (a, b))
 
-    def embed(self, text: str) -> list[float]:
-        # Unknown keys return a zero vector — cosine of 0 to everything.
-        return self._mapping.get(text, [0.0, 0.0, 0.0])
+    def test_a_blank_prompt_has_no_canonical_form(self):
+        self.assertEqual(canonical_form(" \n\t"), "")
+        self.assertFalse(equivalent("", ""))
+        self.assertFalse(equivalent("  ", "\n"))
 
-
-class TestCosineSimilarity(unittest.TestCase):
-    def test_parallel_vectors_are_one(self):
-        v = [1 / math.sqrt(2), 1 / math.sqrt(2)]
-        self.assertAlmostEqual(cosine_similarity(v, v), 1.0, places=6)
-
-    def test_orthogonal_vectors_are_zero(self):
-        self.assertAlmostEqual(cosine_similarity([1.0, 0.0], [0.0, 1.0]), 0.0)
-
-    def test_length_mismatch_raises(self):
-        with self.assertRaises(ValueError):
-            cosine_similarity([1.0, 0.0], [1.0, 0.0, 0.0])
-
-
-class TestHashedBagOfWordsEmbedder(unittest.TestCase):
-    def test_deterministic_output(self):
-        emb = HashedBagOfWordsEmbedder(dim=32)
-        self.assertEqual(emb.embed("hello world"), emb.embed("hello world"))
-
-    def test_output_dimension(self):
-        emb = HashedBagOfWordsEmbedder(dim=64)
-        v = emb.embed("one two three")
-        self.assertEqual(len(v), 64)
-
-    def test_l2_normalised(self):
-        emb = HashedBagOfWordsEmbedder(dim=32)
-        v = emb.embed("some non-empty text with repeated repeated tokens")
-        self.assertAlmostEqual(math.sqrt(sum(x * x for x in v)), 1.0, places=6)
-
-    def test_empty_text_returns_zero_vector(self):
-        emb = HashedBagOfWordsEmbedder(dim=16)
-        self.assertEqual(emb.embed(""), [0.0] * 16)
-
-    def test_invalid_dim_rejected(self):
-        with self.assertRaises(ValueError):
-            HashedBagOfWordsEmbedder(dim=0)
-
-    def test_char_ngram_augmentation(self):
-        emb_no_ngram = HashedBagOfWordsEmbedder(dim=64, char_ngram_size=0)
-        emb_ngram = HashedBagOfWordsEmbedder(dim=64, char_ngram_size=3)
-        v1 = emb_no_ngram.embed("hello")
-        v2 = emb_ngram.embed("hello")
-        # With ngrams, more features contribute -> different vector.
-        self.assertNotEqual(v1, v2)
+    def test_canonical_form_is_the_same_in_every_process(self):
+        """The old bag-of-words embedder used the per-process salted hash(); this must not."""
+        code = (
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "from lib.hal.prompt_equivalence import canonical_form as c; "
+            "print('|'.join(c(a) + '~' + c(b) for a, b in " + repr(NEAR_MISSES[:5]) + "))"
+        )
+        outputs = {
+            subprocess.run([sys.executable, "-c", code, str(REPO)], capture_output=True, text=True,
+                           check=True, env={"PYTHONHASHSEED": seed}).stdout
+            for seed in ("1", "2", "3")
+        }
+        self.assertEqual(len(outputs), 1, outputs)
 
 
-class TestSemanticCacheBasics(unittest.TestCase):
+class TestStructuralVeto(unittest.TestCase):
+    def test_the_veto_reads_generously(self):
+        self.assertEqual(normalise("What's the timeout?"), "what is the timeout")
+        self.assertEqual(normalise("Don’t merge it!"), "do not merge it")
+
+    def test_the_veto_catches_numbers_negations_and_order(self):
+        pairs = [
+            ("Set the TTL to 600s", "Set the TTL to 60s"),
+            ("What is 10²?", "What is 102?"),
+            ("Is it passing?", "Is it not passing?"),
+            ("Don't delete the branch", "Delete the branch"),
+            ("Convert this JSON file to YAML", "convert this yaml file to json"),
+            ('Search for "red blue" green', 'Search for red "blue green"'),
+        ]
+        for a, b in pairs:
+            self.assertTrue(structural_difference(a, b), (a, b))
+
+    def test_the_veto_refuses_differences_a_judge_cannot_see(self):
+        pairs = [
+            ("    print('x')", "print('x')"),
+            ('len("é")', 'len("é")'),
+            ("What is Python?\n", "What is Python?"),
+        ]
+        for a, b in pairs:
+            self.assertTrue(structural_difference(a, b), (a, b))
+
+    def test_the_veto_lets_other_wording_through_to_the_judge(self):
+        pairs = [
+            ("Show the last 20 lines", "Print the final 20 lines"),
+            ("What's the timeout?", "What is the timeout"),
+            ("Please show me the logs", "show the logs"),
+            ("What is Python?", "what is python"),
+        ]
+        for a, b in pairs:
+            self.assertFalse(structural_difference(a, b), (a, b))
+
+
+class TestSemanticCache(unittest.TestCase):
     def setUp(self):
         self.clock = _FakeClock()
-        self.embedder = _FixedEmbedder({
-            "What is Python?": [1.0, 0.0, 0.0],
-            "What's Python?": [0.95, 0.05, 0.0],   # cos ~0.998 with above
-            "Tell me about Rust": [0.0, 1.0, 0.0], # orthogonal
-        })
+        self.cache = SemanticCache(ttl_seconds=300, max_entries=3, clock=self.clock)
 
-    def _cache(self, **overrides):
-        kwargs = dict(
-            ttl_seconds=300, max_entries=100, similarity_threshold=0.92,
-            embedder=self.embedder, clock=self.clock,
-        )
-        kwargs.update(overrides)
-        return SemanticCache(**kwargs)
+    def test_exact_repeat_hits(self):
+        self.cache.put("m", "What is Python?", "a language")
+        response, lookup = self.cache.peek("m", "What is Python?")
+        self.assertEqual(response, "a language")
+        self.assertEqual(lookup, CacheLookup(hit=True, match="exact", matched_prompt="What is Python?"))
 
-    def test_exact_match_hits(self):
-        cache = self._cache()
-        cache.put("groq/llama", "What is Python?", "Python is a language.")
-        self.assertEqual(cache.get("groq/llama", "What is Python?"), "Python is a language.")
+    def test_other_text_misses_without_a_judge(self):
+        self.cache.put("m", "Show the logs", "here are the logs")
+        self.assertIsNone(self.cache.get("m", "Please show me the logs"))
+        self.assertIsNone(self.cache.get("m", "show the logs"))
+        self.assertIsNone(self.cache.get("m", "Show the logs\n"))
 
-    def test_paraphrase_hits_when_above_threshold(self):
-        cache = self._cache()
-        cache.put("groq/llama", "What is Python?", "Python is a language.")
-        self.assertEqual(
-            cache.get("groq/llama", "What's Python?"),
-            "Python is a language.",
-        )
+    def test_every_hal965_near_miss_misses(self):
+        for stored, asked in NEAR_MISSES:
+            cache = SemanticCache(clock=self.clock)
+            cache.put("m", stored, "answer for: " + stored)
+            self.assertIsNone(cache.get("m", asked), (stored, asked))
 
-    def test_orthogonal_query_misses(self):
-        cache = self._cache()
-        cache.put("groq/llama", "What is Python?", "Python is a language.")
-        self.assertIsNone(cache.get("groq/llama", "Tell me about Rust"))
-
-    def test_threshold_enforcement(self):
-        cache = self._cache(similarity_threshold=0.9999)  # too strict for paraphrase
-        cache.put("groq/llama", "What is Python?", "Python is a language.")
-        self.assertIsNone(cache.get("groq/llama", "What's Python?"))
+    def test_a_paraphrase_in_other_words_misses_without_a_judge(self):
+        self.cache.put("m", "Show me the last 20 lines of the server log", "...")
+        self.assertIsNone(self.cache.get("m", "Print the final twenty lines of the server log"))
 
     def test_model_scope_isolation(self):
-        cache = self._cache()
-        cache.put("groq/llama", "What is Python?", "llama answer")
-        # Same prompt, different model -> miss.
-        self.assertIsNone(cache.get("opus/4-7", "What is Python?"))
+        self.cache.put("model-a", "What is Python?", "from a")
+        self.assertIsNone(self.cache.get("model-b", "What is Python?"))
+        self.assertEqual(self.cache.get("model-a", "What is Python?"), "from a")
 
     def test_ttl_expiry(self):
-        cache = self._cache(ttl_seconds=10)
-        cache.put("groq/llama", "What is Python?", "answer")
-        self.clock.advance(11.0)
-        self.assertIsNone(cache.get("groq/llama", "What is Python?"))
+        self.cache.put("m", "What is Python?", "a language")
+        self.clock.advance(301)
+        self.assertIsNone(self.cache.get("m", "What is Python?"))
+        self.assertEqual(self.cache.stats()["entries"], 0)
 
     def test_max_entries_fifo_eviction(self):
-        cache = self._cache(max_entries=2)
-        cache.put("groq/llama", "What is Python?", "A")
-        cache.put("groq/llama", "Tell me about Rust", "B")
-        cache.put("groq/llama", "What's Python?", "C")
-        # The oldest (A) got evicted; "What is Python?" should no longer hit.
-        # But "What's Python?" embedding is 0.998 similar to "What is Python?",
-        # and C is stored under "What's Python?" — so querying "What is Python?"
-        # will match the "What's Python?" entry with response C.
-        self.assertEqual(cache.get("groq/llama", "What is Python?"), "C")
-        self.assertEqual(cache.stats()["entries"], 2)
+        for i in range(4):
+            self.cache.put("m", f"question {i}", f"answer {i}")
+        self.assertIsNone(self.cache.get("m", "question 0"))
+        self.assertEqual(self.cache.get("m", "question 3"), "answer 3")
+        self.assertEqual(self.cache.stats()["entries"], 3)
 
-    def test_invalidate_exact_match(self):
-        cache = self._cache()
-        cache.put("groq/llama", "What is Python?", "answer")
-        self.assertTrue(cache.invalidate("groq/llama", "What is Python?"))
-        self.assertIsNone(cache.get("groq/llama", "What is Python?"))
-        self.assertFalse(cache.invalidate("groq/llama", "What is Python?"))
+    def test_putting_the_same_request_again_replaces_its_answer(self):
+        self.cache.put("m", "What is Python?", "old")
+        self.cache.put("m", "What is Python?", "new")
+        self.assertEqual(self.cache.get("m", "What is Python?"), "new")
+        self.assertEqual(self.cache.stats()["entries"], 1)
+
+    def test_invalidate_removes_only_the_same_prompt(self):
+        self.cache.put("m", "Show the logs", "logs")
+        self.assertFalse(self.cache.invalidate("m", "show the logs"))
+        self.assertFalse(self.cache.invalidate("m", " Show the logs\n"))
+        self.assertTrue(self.cache.invalidate("m", "Show the logs"))
+        self.assertIsNone(self.cache.get("m", "Show the logs"))
+        self.assertFalse(self.cache.invalidate("m", "Show the logs"))
 
     def test_clear(self):
-        cache = self._cache()
-        cache.put("groq/llama", "What is Python?", "answer")
-        cache.put("groq/llama", "Tell me about Rust", "answer2")
-        cleared = cache.clear()
-        self.assertEqual(cleared, 2)
-        self.assertEqual(cache.stats()["entries"], 0)
+        self.cache.put("m", "a question", "an answer")
+        self.cache.get("m", "a question")
+        self.assertEqual(self.cache.clear(), 1)
+        stats = self.cache.stats()
+        self.assertEqual((stats["entries"], stats["total_hits"]), (0, 0))
 
     def test_stats_track_hit_miss_rate(self):
-        cache = self._cache()
-        cache.put("groq/llama", "What is Python?", "answer")
-        cache.get("groq/llama", "What is Python?")    # hit
-        cache.get("groq/llama", "What's Python?")      # hit (paraphrase)
-        cache.get("groq/llama", "Tell me about Rust") # miss (orthogonal)
-        stats = cache.stats()
-        self.assertEqual(stats["total_hits"], 2)
-        self.assertEqual(stats["total_misses"], 1)
-        self.assertAlmostEqual(stats["hit_rate"], 2 / 3, places=4)
+        self.cache.put("m", "a question", "an answer")
+        self.cache.get("m", "a question")
+        self.cache.get("m", "another question")
+        stats = self.cache.stats()
+        self.assertEqual((stats["total_hits"], stats["total_misses"]), (1, 1))
+        self.assertAlmostEqual(stats["hit_rate"], 0.5)
+        self.assertEqual(stats["matcher"], "prompt_equivalence")
 
-    def test_peek_returns_lookup_diagnostic(self):
-        cache = self._cache()
-        cache.put("groq/llama", "What is Python?", "answer")
-        hit = cache.peek("groq/llama", "What's Python?")
-        self.assertIsNotNone(hit)
-        response, lookup = hit
-        self.assertEqual(response, "answer")
-        self.assertIsInstance(lookup, CacheLookup)
-        self.assertTrue(lookup.hit)
-        self.assertGreater(lookup.best_similarity, 0.9)
-        self.assertEqual(lookup.best_prompt, "What is Python?")
-        self.assertEqual(lookup.entries_considered, 1)
+    def test_peek_on_a_miss_returns_a_lookup(self):
+        self.assertEqual(self.cache.peek("m", "unseen"),
+                         (None, CacheLookup(hit=False, match=None, matched_prompt=None)))
 
-    def test_peek_returns_lookup_on_miss(self):
-        cache = self._cache(similarity_threshold=0.9999)
-        cache.put("groq/llama", "What is Python?", "answer")
-        result = cache.peek("groq/llama", "What's Python?")
-        self.assertIsNotNone(result)
-        response, lookup = result
-        self.assertIsNone(response)
-        self.assertFalse(lookup.hit)
-
-    def test_invalid_threshold_rejected(self):
-        with self.assertRaises(ValueError):
-            self._cache(similarity_threshold=0.0)
-        with self.assertRaises(ValueError):
-            self._cache(similarity_threshold=1.1)
+    def test_a_blank_prompt_is_never_stored(self):
+        self.cache.put("m", "  \n", "anything")
+        self.assertEqual(self.cache.stats()["entries"], 0)
+        self.assertIsNone(self.cache.get("m", ""))
 
     def test_invalid_max_entries_rejected(self):
         with self.assertRaises(ValueError):
-            self._cache(max_entries=0)
+            SemanticCache(max_entries=0)
+
+    def test_construction_defaults(self):
+        stats = SemanticCache().stats()
+        self.assertEqual((stats["ttl_seconds"], stats["max_entries"]), (300, 100))
 
 
-class TestHypothesisHSCACHE(unittest.TestCase):
-    """H-SCACHE falsification harness.
+class _FakeVerifier:
+    """Canned embeddings and a canned judge, recording every text embedded and pair judged."""
 
-    Claim: on a synthetic paraphrase corpus, a semantic cache hits
-    more often than an exact-match cache of the same size. The
-    test intentionally avoids an absolute hit-rate target — that
-    target belongs in the hypothesis engine with real embeddings.
-    Here we just verify the SIGN of the effect is positive (semantic
-    > exact) under the stdlib BoW embedder.
+    name = "fake"
+
+    def __init__(self, vectors: dict, same: set):
+        self.vectors = vectors
+        self.same = same
+        self.asked: list = []
+        self.embedded: list = []
+
+    def embed(self, text):
+        self.embedded.append(text)
+        return self.vectors.get(text)
+
+    def same_request(self, a, b):
+        self.asked.append((a, b))
+        return frozenset((a, b)) in self.same
+
+
+STORED = "Show me the last 20 lines of the server log"
+PARAPHRASE = "Print the final 20 lines of the server log"
+ORIGIN, CLOSE, FAR = [1.0, 0.0], [0.9, 0.4358898943540674], [0.5, 0.8660254037844386]
+
+
+class TestVerifiedTier(unittest.TestCase):
+    def _cache(self, vectors, same=(), clock=None):
+        self.verifier = _FakeVerifier(vectors, {frozenset(p) for p in same})
+        return SemanticCache(verifier=self.verifier, clock=clock or _FakeClock())
+
+    def test_a_confirmed_paraphrase_hits_as_verified(self):
+        cache = self._cache({STORED: ORIGIN, PARAPHRASE: CLOSE}, same=[(PARAPHRASE, STORED)])
+        cache.put("m", STORED, "the lines")
+        response, lookup = cache.peek("m", PARAPHRASE)
+        self.assertEqual((response, lookup.match, lookup.matched_prompt), ("the lines", "verified", STORED))
+
+    def test_a_paraphrase_the_judge_rejects_misses(self):
+        cache = self._cache({STORED: ORIGIN, PARAPHRASE: CLOSE})
+        cache.put("m", STORED, "the lines")
+        self.assertIsNone(cache.get("m", PARAPHRASE))
+        self.assertEqual(self.verifier.asked, [(PARAPHRASE, STORED)])
+
+    def test_below_the_floor_the_judge_is_never_asked(self):
+        cache = self._cache({STORED: ORIGIN, PARAPHRASE: FAR}, same=[(PARAPHRASE, STORED)])
+        cache.put("m", STORED, "the lines")
+        self.assertIsNone(cache.get("m", PARAPHRASE))
+        self.assertEqual(self.verifier.asked, [])
+
+    def test_the_veto_decides_before_the_judge(self):
+        pairs = [("Raise the TTL to 600 seconds", "Raise the TTL to 60 seconds"),
+                 ("Is the build passing?", "Is the build not passing?"),
+                 ("Convert this JSON file to YAML", "Convert this YAML file to JSON")]
+        for stored, asked in pairs:
+            cache = self._cache({stored: ORIGIN, asked: CLOSE}, same=[(asked, stored)])
+            cache.put("m", stored, "answer")
+            self.assertIsNone(cache.get("m", asked), (stored, asked))
+            self.assertEqual(self.verifier.asked, [], (stored, asked))
+
+    def test_without_an_embedding_there_is_no_candidate(self):
+        cache = self._cache({STORED: ORIGIN}, same=[(PARAPHRASE, STORED)])
+        cache.put("m", STORED, "the lines")
+        self.assertIsNone(cache.get("m", PARAPHRASE))
+        self.assertEqual(self.verifier.asked, [])
+
+    def test_the_closest_candidate_is_the_one_judged(self):
+        other = "Show me the server log"
+        cache = self._cache({STORED: ORIGIN, other: [0.6, 0.8], PARAPHRASE: CLOSE},
+                            same=[(PARAPHRASE, STORED)])
+        cache.put("m", other, "the whole log")
+        cache.put("m", STORED, "the lines")
+        self.assertEqual(cache.get("m", PARAPHRASE), "the lines")
+        self.assertEqual(self.verifier.asked, [(PARAPHRASE, STORED)])
+
+    def test_verified_hits_respect_model_scope_and_ttl(self):
+        clock = _FakeClock()
+        cache = self._cache({STORED: ORIGIN, PARAPHRASE: CLOSE}, same=[(PARAPHRASE, STORED)], clock=clock)
+        cache.put("m", STORED, "the lines")
+        self.assertIsNone(cache.get("other-model", PARAPHRASE))
+        clock.advance(301)
+        self.assertIsNone(cache.get("m", PARAPHRASE))
+        self.assertEqual(self.verifier.asked, [])
+
+    def test_stats_name_the_verifier_and_floor(self):
+        stats = self._cache({}).stats()
+        self.assertEqual((stats["verifier"], stats["candidate_floor"]), ("fake", 0.70))
+
+    def test_invalid_candidate_floor_rejected(self):
+        for floor in (0.0, 1.5):
+            with self.assertRaises(ValueError):
+                SemanticCache(candidate_floor=floor)
+
+    def test_an_answer_invalidated_during_the_judge_call_is_not_served(self):
+        cache = self._cache({STORED: ORIGIN, PARAPHRASE: CLOSE}, same=[(PARAPHRASE, STORED)])
+        cache.put("m", STORED, "the lines")
+        judge = self.verifier.same_request
+        self.verifier.same_request = lambda a, b: (cache.invalidate("m", STORED), judge(a, b))[1]
+        self.assertIsNone(cache.get("m", PARAPHRASE))
+        self.assertEqual(self.verifier.asked, [(PARAPHRASE, STORED)])
+        self.assertEqual(cache.stats()["total_misses"], 1)
+
+    def test_a_stored_vector_of_another_size_is_never_a_candidate(self):
+        cache = self._cache({STORED: [1.0, 0.0, 0.0], PARAPHRASE: CLOSE}, same=[(PARAPHRASE, STORED)])
+        cache.put("m", STORED, "the lines")
+        self.assertIsNone(cache.get("m", PARAPHRASE))
+        self.assertEqual(self.verifier.asked, [])
+
+    def test_no_embedding_call_when_nothing_could_match(self):
+        cache = self._cache({STORED: ORIGIN, PARAPHRASE: CLOSE}, same=[(PARAPHRASE, STORED)])
+        self.assertIsNone(cache.get("m", PARAPHRASE))  # empty cache
+        cache.put("other-model", STORED, "the lines")
+        self.assertIsNone(cache.get("m", PARAPHRASE))  # entries only for another model
+        self.assertEqual((self.verifier.embedded, self.verifier.asked), ([STORED], []))
+
+    def test_a_change_of_case_can_still_hit_through_the_judge(self):
+        cache = self._cache({"What is Python?": ORIGIN, "what is python?": CLOSE},
+                            same=[("what is python?", "What is Python?")])
+        cache.put("m", "What is Python?", "a language")
+        response, lookup = cache.peek("m", "what is python?")
+        self.assertEqual((response, lookup.match), ("a language", "verified"))
+
+
+# HAL#965's same-meaning pairs: one answer is right for both.
+PARAPHRASES = [
+    ("How do I restart the HAL gateway?", "What's the command to restart the HAL gateway service?"),
+    ("Show me the last 20 lines of the server log", "Print the final twenty lines of the server log"),
+    ("What does the semantic cache threshold do?", "Explain what the semantic cache's similarity threshold controls"),
+    ("List all open pull requests in the repo", "Show every pull request that is still open in this repository"),
+    ("Why is my pytest run failing with an import error?", "My pytest run fails on an import error, why?"),
+    ("Convert this JSON file to YAML", "Turn this JSON file into YAML"),
+    ("How much disk space is left on this machine?", "Check how much free disk space this machine has"),
+    ("Summarise the changes in the last commit", "Give me a summary of what the most recent commit changed"),
+    ("What is the default timeout for provider calls?", "What's the provider call timeout by default?"),
+    ("Write a Python function that reverses a string", "Write a Python function to reverse a string"),
+    ("How do I undo my last git commit but keep the changes?", "Undo the latest git commit while keeping my changes"),
+    ("Which port does the HAL gateway listen on?", "What port is the HAL gateway listening on?"),
+    ("Explain the difference between a list and a tuple in Python",
+     "What's the difference between Python lists and tuples?"),
+    ("Translate 'good morning' into French", "How do you say 'good morning' in French?"),
+    ("Find all TODO comments in the codebase", "Search the codebase for every TODO comment"),
+    ("What time is it in Tokyo right now?", "Current time in Tokyo?"),
+    ("How do I create a virtual environment in Python?", "Create a Python virtual environment, how?"),
+    ("Rename the variable foo to bar in this file", "In this file, rename foo to bar"),
+    ("Is the remote server reachable over the VPN?", "Can I reach the remote server through the VPN?"),
+    ("Count the lines of code in the lib folder", "How many lines of code are in lib?"),
+]
+
+
+@unittest.skipUnless(os.environ.get("HAL_TEST_LIVE") == "1", "live: needs HAL_TEST_LIVE=1 and a local Ollama")
+class TestLiveVerifier(unittest.TestCase):
+    """HAL#965's measurement as an executable anchor, against the real local judge.
+
+    Measured on 2026-11-26 with qwen3:8b: 18 of 20 paraphrases hit, 0 of 20 near-misses in
+    either direction. The paraphrase floor below is deliberately loose, because recall varies
+    by model and by which prompt is stored first; the near-miss assertion is not loose.
     """
 
-    # Prompt pairs chosen to share at least a few tokens so BoW cosine
-    # has a real chance of clearing the threshold. Each pair's second
-    # element is a "paraphrase-with-shared-vocabulary" (not a Word2Vec
-    # synonym — the BoW embedder can't do that).
-    PAIRS = [
-        ("What is the capital of France?", "Tell me the capital of France."),
-        ("How do I install Python?", "How can I install Python?"),
-        ("Explain recursion in one line.", "In one line, explain recursion."),
-        ("Summarise the article.", "Please summarise the article."),
-        ("Best way to cook rice?", "Best way to cook some rice"),
-        ("Give me three Python tips.", "Give three Python tips please."),
-        ("What's the time in Tokyo?", "Tell me the time in Tokyo."),
-        ("Debug this python stack trace.", "Help me debug this python stack trace."),
-        ("Translate 'hello' to French.", "Translate hello to French"),
-        ("Fix the failing CI test.", "Please fix the failing CI test."),
-    ]
+    @classmethod
+    def setUpClass(cls):
+        from lib.hal.cache_verifier import OllamaVerifier
+        # A long timeout: this measures the judge's decisions, not its latency. At the 5 s
+        # production timeout, one slow call rests the verifier and every later pair misses.
+        cls.verifier = OllamaVerifier(os.environ.get("HAL_TEST_JUDGE", "qwen3:8b"), timeout_s=60.0)
+        if not cls.verifier.warm():
+            raise unittest.SkipTest("the local Ollama models did not load")
 
-    def test_semantic_cache_hits_more_than_exact_on_paraphrase_corpus(self):
-        lowered_threshold = 0.55  # BoW is coarser than sentence-transformers
-        embedder = HashedBagOfWordsEmbedder(dim=512, char_ngram_size=3)
+    def _hits(self, pairs):
+        hits = []
+        for stored, asked in pairs:
+            cache = SemanticCache(verifier=self.verifier)
+            cache.put("m", stored, "answer")
+            if cache.get("m", asked) is not None:
+                hits.append((stored, asked))
+        return hits
 
-        # Populate cache with the FIRST prompt of each pair, answer keyed to pair id.
-        semantic = SemanticCache(
-            ttl_seconds=3600, max_entries=256,
-            similarity_threshold=lowered_threshold, embedder=embedder,
-        )
-        for idx, (orig, _) in enumerate(self.PAIRS):
-            semantic.put("groq/llama", orig, f"response-{idx}")
+    def test_no_near_miss_gets_an_answer_in_either_direction(self):
+        self.assertEqual(self._hits(NEAR_MISSES) + self._hits([(b, a) for a, b in NEAR_MISSES]), [])
 
-        # Probe with the SECOND (paraphrase) prompt of each pair.
-        sem_hits = sum(
-            1 for _, para in self.PAIRS
-            if semantic.get("groq/llama", para) is not None
-        )
-        # Exact-match baseline — exact sha256 of "What is the capital of France?"
-        # never equals "Tell me the capital of France." so hit rate = 0.
-        exact_hits = 0  # by construction of PAIRS; encoded here for clarity.
-
-        self.assertGreater(
-            sem_hits, exact_hits,
-            f"Semantic cache must beat exact-match on paraphrase corpus "
-            f"(sem={sem_hits}, exact={exact_hits})",
-        )
-        # Also assert a floor: at least 30% of pairs must semantic-hit,
-        # else the BoW embedder isn't producing usable signal and the
-        # module's Phase-γ load-bearing claim is weakened.
-        self.assertGreaterEqual(sem_hits / len(self.PAIRS), 0.3,
-                                f"Semantic hit rate too low: {sem_hits}/{len(self.PAIRS)}")
-
-
-class TestDefaultEmbedder(unittest.TestCase):
-    def test_falls_back_to_bag_of_words_when_embeddings_unavailable(self):
-        # Don't assume `embeddings` package exists on the test host.
-        emb = _default_embedder()
-        # One of two shapes: either the real engine adapter or our stdlib fallback.
-        # Both MUST produce an L2-normalised vector of positive length for a non-empty prompt.
-        vec = emb.embed("integration probe for default embedder")
-        self.assertGreater(len(vec), 0)
-        norm = math.sqrt(sum(v * v for v in vec))
-        # Tolerate 1e-6 float slop.
-        self.assertLess(abs(norm - 1.0), 1e-5)
-
-
-class TestEntryDataclass(unittest.TestCase):
-    def test_construction(self):
-        e = SemanticCacheEntry(
-            prompt="hi", response="yo", embedding=[0.0, 1.0],
-            created_at=0.0, model="m",
-        )
-        self.assertEqual(e.hit_count, 0)
+    def test_most_paraphrases_hit(self):
+        hits = self._hits(PARAPHRASES)
+        self.assertGreaterEqual(len(hits), 12, f"{len(hits)} of {len(PARAPHRASES)} paraphrases hit")
 
 
 if __name__ == "__main__":

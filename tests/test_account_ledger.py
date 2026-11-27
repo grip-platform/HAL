@@ -15,6 +15,7 @@ import itertools
 import json
 import logging
 import multiprocessing as mp
+import errno
 import os
 import subprocess
 import sys
@@ -418,16 +419,80 @@ def test_an_unreadable_store_is_an_empty_pool(tmp_path, monkeypatch):
                     reason="this account lacks the privilege required to create symlinks")
 def test_a_member_that_cannot_be_trusted_is_left_out_alone(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.INFO)
-    active = _store(tmp_path, monkeypatch, {"acct-a": TOKEN_A, "acct-open": "fake-open-token",
-                                            "acct-two": "fake two tokens", "acct-empty": "",
-                                            "acct-b": TOKEN_B},
-                    pool=["acct-a", "acct-open", "acct-two", "acct-empty", "acct-link",
-                          "acct-missing", "acct-b"])
-    os.chmod(active.with_name(f"{active.name}.acct-open"), 0o644)
+    # Windows chmod cannot make a file group-readable, so acct-open's case only
+    # exists where POSIX modes do (as in test_a_pool_that_cannot_be_trusted_is_empty).
+    posix_modes = sys.platform != "win32"
+    members = {"acct-a": TOKEN_A, "acct-two": "fake two tokens", "acct-empty": "",
+               "acct-target": "fake-linked-token", "acct-b": TOKEN_B}
+    pool = ["acct-a", "acct-two", "acct-empty", "acct-link", "acct-missing", "acct-b"]
+    if posix_modes:
+        members["acct-open"] = "fake-open-token"
+        pool.insert(1, "acct-open")
+    active = _store(tmp_path, monkeypatch, members, pool=pool)
+    if posix_modes:
+        os.chmod(active.with_name(f"{active.name}.acct-open"), 0o644)
+    # The link's target holds its own token, so following the link would show.
     active.with_name(f"{active.name}.acct-link").symlink_to(
-        active.with_name(f"{active.name}.acct-a"))
+        active.with_name(f"{active.name}.acct-target"))
     assert al.pool_tokens() == [("acct-a", TOKEN_A), ("acct-b", TOKEN_B)]
     assert "fake-open-token" not in caplog.text and "fake two tokens" not in caplog.text
+
+
+@pytest.mark.skipif(not CAN_SYMLINK,
+                    reason="this account lacks the privilege required to create symlinks")
+def test_the_no_follow_open_never_reads_a_symlink_target(tmp_path):
+    # POSIX refuses the link outright (O_NOFOLLOW); Windows opens the link itself
+    # (FILE_FLAG_OPEN_REPARSE_POINT), flags it as a reparse point, and never yields
+    # the target's bytes.
+    target = tmp_path / "target"
+    target.write_text("fake-target-token\n", encoding="utf-8")
+    link = tmp_path / "link"
+    link.symlink_to(target)
+    try:
+        fd = al._open_no_follow(link)
+    except OSError as exc:
+        assert os.name != "nt" and exc.errno == errno.ELOOP, exc
+        return
+    try:
+        assert al._is_reparse_point(os.fstat(fd))
+        assert b"fake-target-token" not in os.read(fd, 4096)
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the CreateFileW branch exists only on Windows")
+def test_on_windows_the_no_follow_open_reads_a_regular_file(tmp_path):
+    plain = tmp_path / "plain"
+    plain.write_bytes(b"fake-plain-token\n")
+    fd = al._open_no_follow(plain)
+    try:
+        assert not al._is_reparse_point(os.fstat(fd))
+        assert os.read(fd, 4096) == b"fake-plain-token\n"
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="junctions exist only on Windows")
+def test_on_windows_a_junctioned_store_is_an_empty_pool(tmp_path, monkeypatch):
+    # Any Windows user can make a junction without privilege, and lstat reports it
+    # as a directory; the pool must refuse it as it refuses a symlinked store.
+    import _winapi
+
+    active = _store(tmp_path, monkeypatch, {"acct-a": TOKEN_A})
+    junction = tmp_path / "junction-store"
+    _winapi.CreateJunction(str(active.parent), str(junction))
+    monkeypatch.setenv(al.STORE_PATH_ENV, str(junction / al.STORE_BASENAME))
+    assert al.pool_tokens() == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows opens through CreateFileW instead")
+def test_a_posix_open_without_o_nofollow_refuses_instead_of_following(tmp_path, monkeypatch,
+                                                                     caplog):
+    caplog.set_level(logging.WARNING)
+    _store(tmp_path, monkeypatch, {"acct-a": TOKEN_A})
+    monkeypatch.delattr(al.os, "O_NOFOLLOW", raising=False)
+    assert al.pool_tokens() == []
+    assert "no O_NOFOLLOW on this platform" in caplog.text  # the empty pool says why
 
 
 def test_a_metered_key_is_never_pool_capacity(tmp_path, monkeypatch):

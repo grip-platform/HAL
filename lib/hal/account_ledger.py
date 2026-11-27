@@ -96,6 +96,13 @@ if os.name == "nt":
     close_handle = kernel32.CloseHandle
     close_handle.argtypes = (wintypes.HANDLE,)
     close_handle.restype = wintypes.BOOL
+    import msvcrt
+
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                            wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    create_file.restype = wintypes.HANDLE
+    invalid_handle = wintypes.HANDLE(-1).value
 
 from lib.hal.locked_json import read_json, update_json
 
@@ -432,26 +439,65 @@ def _private_dir(path: Path) -> bool:
     # Windows exposes no POSIX group/other permission bits through stat; NTFS ACL
     # validation is outside this layer, so retain every check Windows can express.
     private_mode = os.name == "nt" or not stat.S_IMODE(st.st_mode) & _GROUP_OTHER
-    return stat.S_ISDIR(st.st_mode) and _owned(st) and private_mode
+    # A Windows junction is a reparse point that lstat still reports as a directory,
+    # and any user can make one without privilege, so it is refused like a symlink.
+    return (stat.S_ISDIR(st.st_mode) and _owned(st) and private_mode
+            and not _is_reparse_point(st))
+
+
+def _open_no_follow(path: Path) -> int:
+    """A read-only descriptor for ``path`` itself, never a symlink's target.
+
+    POSIX opens with O_NOFOLLOW. Windows has no such flag, so it opens with CreateFileW
+    and FILE_FLAG_OPEN_REPARSE_POINT, which opens a symlink or junction itself instead
+    of its target, in one atomic call; the caller refuses any reparse point by the
+    attributes of the opened handle.
+    """
+    if os.name != "nt":
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        if nofollow is None:  # no atomic no-follow open here: refuse, never follow
+            _log.warning("no O_NOFOLLOW on this platform, so the account pool is not read")
+            raise OSError(f"no O_NOFOLLOW on this platform; {path.name} is not opened")
+        return os.open(path, os.O_RDONLY | nofollow)
+    # GENERIC_READ, share read/write/delete, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT
+    handle = create_file(str(path), 0x80000000, 0x7, None, 3, 0x00200000, None)
+    if not handle or handle == invalid_handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDONLY)
+    except OSError:
+        close_handle(handle)
+        raise
+
+
+def _is_reparse_point(st: os.stat_result) -> bool:
+    """A symlink or junction opened as itself (only Windows can open one)."""
+    return bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 def _private_text(path: Path) -> Optional[str]:
     """The file's text when it and its directory are private to this user, else None.
 
-    The file is opened without following a symlink and judged by the descriptor it
-    opened, so it cannot be swapped between the check and the read.
+    The file is opened without following a symlink, in one atomic call (O_NOFOLLOW
+    on POSIX, CreateFileW with FILE_FLAG_OPEN_REPARSE_POINT on Windows), and judged by
+    the descriptor it opened, so the file itself cannot be swapped between the check
+    and the read. Only that last component is pinned: the directory is checked by
+    path before the open, so someone able to replace it in between is not stopped.
+    Windows ACLs are not checked here: its stat shows no group or other bits, so a
+    file that other accounts can read is not refused on Windows.
     """
     if not _private_dir(path.parent):
         return None
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = _open_no_follow(path)
     except OSError:
         return None
     try:
         st = os.fstat(fd)
         # Windows stat mirrors synthetic mode bits across owner/group/other.
         private_mode = os.name == "nt" or not stat.S_IMODE(st.st_mode) & _GROUP_OTHER
-        if not (stat.S_ISREG(st.st_mode) and _owned(st) and private_mode):
+        if not (stat.S_ISREG(st.st_mode) and _owned(st) and private_mode
+                and not _is_reparse_point(st)):
             return None
         data = os.read(fd, _MAX_FILE_BYTES + 1)
     except OSError:

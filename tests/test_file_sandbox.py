@@ -233,20 +233,26 @@ class TestGlob(_TmpSandbox):
         # also plant a real file to verify glob still works
         (Path(self.root) / "real.txt").write_text("x\n",
                                                     encoding="utf-8")
-        import signal
+        # Bounded-time assertion with a watchdog thread: SIGALRM exists only on
+        # Unix, and this test runs on Windows wherever symlinks can be made.
+        import threading
 
-        def _alarm_handler(_signum, _frame):
-            raise RuntimeError("glob did not terminate within 5s")
+        outcome = {}
 
-        # Bounded-time assertion via SIGALRM
-        signal.signal(signal.SIGALRM, _alarm_handler)
-        signal.alarm(5)
-        try:
-            hits = glob_pattern(self.root, "**/*.txt")
-        finally:
-            signal.alarm(0)
+        def run():
+            try:
+                outcome["hits"] = glob_pattern(self.root, "**/*.txt")
+            except BaseException as exc:  # noqa: BLE001 -- re-raised below
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        worker.join(5)
+        self.assertFalse(worker.is_alive(), "glob did not terminate within 5s")
+        if "error" in outcome:
+            raise outcome["error"]
         # Real file must still be found
-        self.assertIn("real.txt", hits)
+        self.assertIn("real.txt", outcome["hits"])
 
 
 class TestValidateRoot(unittest.TestCase):

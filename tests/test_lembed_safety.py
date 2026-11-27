@@ -5,8 +5,6 @@ Scope:
   * `_ensure_lembed_registered` raises `LembedNotRegisteredError` when the
     extension is not loaded.
   * `safe_lembed` surfaces the typed exception when lembed SQL fails.
-  * `_EngineAdapter.embed` raises `EmbedderBackendError` on None / empty
-    / non-numeric returns from the underlying engine.
   * `KonoLifecycleMixin.connect` invokes `_ensure_lembed_registered`
     after loading the lembed extension (Goodhart guard — test fails if
     the connect() wiring is removed).
@@ -211,68 +209,6 @@ class TestConnectCallsRegister(unittest.TestCase):
             sub.connect()
 
         mock_reg.assert_not_called()
-
-
-class TestEngineAdapterDefence(unittest.TestCase):
-    """Contract of `_EngineAdapter.embed(text)` — Issue #199 defence-in-depth.
-
-    The adapter no longer raises on bad engine output; instead it activates a
-    permanent HashedBagOfWordsEmbedder fallback so a single bad call does not
-    cascade into an error storm.  Each test verifies:
-      1. The call succeeds (returns a non-empty float list).
-      2. The fallback is permanently activated (subsequent calls bypass engine).
-    """
-
-    def _adapter(self, engine_mock):
-        from lib.hal.semantic_cache import _EngineAdapter
-        return _EngineAdapter(engine_mock)
-
-    def test_normalises_valid_vector(self):
-        engine = MagicMock()
-        engine.embed_single.return_value = [3.0, 4.0]  # norm = 5
-        out = self._adapter(engine).embed("hello")
-        self.assertAlmostEqual(out[0], 0.6, places=5)
-        self.assertAlmostEqual(out[1], 0.8, places=5)
-
-    def test_fallback_activated_on_none_return(self):
-        engine = MagicMock()
-        engine.embed_single.return_value = None
-        adapter = self._adapter(engine)
-        out = adapter.embed("hello")
-        self.assertIsInstance(out, list)
-        self.assertTrue(len(out) > 0)
-        self.assertIsNotNone(adapter._fallback, "fallback must be activated")
-        # second call must NOT hit the engine again
-        engine.embed_single.reset_mock()
-        adapter.embed("world")
-        engine.embed_single.assert_not_called()
-
-    def test_fallback_activated_on_empty_return(self):
-        engine = MagicMock()
-        engine.embed_single.return_value = []
-        adapter = self._adapter(engine)
-        out = adapter.embed("hello")
-        self.assertIsInstance(out, list)
-        self.assertTrue(len(out) > 0)
-        self.assertIsNotNone(adapter._fallback)
-
-    def test_fallback_activated_on_non_numeric_return(self):
-        engine = MagicMock()
-        engine.embed_single.return_value = ["not", "numbers"]
-        adapter = self._adapter(engine)
-        out = adapter.embed("hello")
-        self.assertIsInstance(out, list)
-        self.assertTrue(len(out) > 0)
-        self.assertIsNotNone(adapter._fallback)
-
-    def test_fallback_activated_on_exception(self):
-        engine = MagicMock()
-        engine.embed_single.side_effect = RuntimeError("boom")
-        adapter = self._adapter(engine)
-        out = adapter.embed("hello")
-        self.assertIsInstance(out, list)
-        self.assertTrue(len(out) > 0)
-        self.assertIsNotNone(adapter._fallback)
 
 
 # ---------------------------------------------------------------------------
