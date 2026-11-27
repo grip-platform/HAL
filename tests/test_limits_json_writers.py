@@ -22,6 +22,11 @@ from pathlib import Path
 from lib.hal import locked_json, sentinel
 
 ROUNDS = 30
+# Seven spawned processes share one lock here, and on a slow CI runner a writer can wait
+# longer than locked_json's 2 s request-path default (GitHub's Windows runner did, in
+# public GRIP run 45994622654). This test checks that no write is lost or torn, not how
+# fast the lock frees, so its writers wait up to this long.
+LOCK_BUDGET_S = 60.0
 
 
 def _sentinel_writer(path_text: str, provider: str, rounds: int) -> str:
@@ -33,6 +38,14 @@ def _sentinel_writer(path_text: str, provider: str, rounds: int) -> str:
         state.utilisation = float(value)
         watch._state[provider] = state
         watch._save_state()
+    # The sentinel drops a save that misses the lock and saves that change at its next
+    # tick. A spawned writer has no next tick, so it saves until its last round is written.
+    deadline = time.monotonic() + LOCK_BUDGET_S
+    last = watch._state[provider].to_dict()
+    while watch._written.get(provider) != last and time.monotonic() < deadline:
+        watch._save_state()  # each try waits up to locked_json's 2 s for the lock
+    if watch._written.get(provider) != last:
+        return f"{provider}: last round not written within {LOCK_BUDGET_S:g} s"
     return provider
 
 
@@ -42,7 +55,8 @@ def _locked_writer(path_text: str, service: str, rounds: int) -> str:
     read-modify-write through ``locked_json``."""
     for _ in range(rounds):
         locked_json.update_json(
-            path_text, lambda states: _with_cooldown(states, service), mode=0o644)
+            path_text, lambda states: _with_cooldown(states, service), mode=0o644,
+            lock_timeout=LOCK_BUDGET_S)
     return service
 
 

@@ -74,6 +74,16 @@ CHECKOUT = Path(__file__).resolve().parent.parent
 os.environ.setdefault("HAL_HOME", str(CHECKOUT))
 os.environ.setdefault("HAL_ROOT", str(CHECKOUT))
 
+# lib/hal_redaction_shield.py merges the operator's private redaction list,
+# named by this variable or found through a guardian config in this checkout
+# or, since HAL#892, in GRIP's ${CLAUDE_DIR:-~/.claude}. "none" keeps every test
+# on the lists it builds itself, on any machine, as GRIP's conftest does. It is
+# set here, once, rather than in a per-test fixture, so a module that installs
+# its own list in setUpModule (tests/test_build_oss_candidate.py) keeps it; a
+# per-test "none" overrode that list and failed 8 of its tests. An inherited
+# value is replaced on purpose: no test run should read the real list.
+os.environ["GRIP_REDACTION_OVERLAY"] = "none"
+
 
 @pytest.fixture(autouse=True)
 def _isolated_hal_home(tmp_path, monkeypatch):

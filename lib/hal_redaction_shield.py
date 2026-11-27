@@ -7,6 +7,11 @@ artifacts, channel payloads, and prompts leaving for a cloud LLM.
 
 This is a copy of GRIP's lib/redaction_shield.py for HAL.
 
+The operator's private list is merged in through ``private_overlay_path()``,
+which takes the first of: ``$GRIP_REDACTION_OVERLAY`` (a file, or "none" to
+turn the list off), HAL's own ``config/guardian.local.json``, and GRIP's
+``${CLAUDE_DIR:-~/.claude}/config/guardian.local.json`` (HAL#892).
+
 Origin (2026-07-02): the public decision-chain ledger
 (codetonight-sa.github.io/grip-decision-chain) carried client/external
 identities in its free-text fields — the emitter's leak scan covered only
@@ -278,23 +283,44 @@ def private_overlay_path() -> Path | None:
     """The operator's private denylist, merged ahead of the shared one.
 
     Personal entries live in the operator's private guardian repository, never
-    in GRIP (rules/personal-matters-stay-private.md), so GRIP finds them
+    in GRIP (rules/personal-matters-stay-private.md), so the shield finds them
     through config/guardian.local.json, a gitignored file only the operator's
-    machines carry. $GRIP_REDACTION_OVERLAY names a file directly, and "none"
-    turns the overlay off. None when nothing names one."""
+    machines carry: HAL's own, or else GRIP's (_guardian_local).
+    $GRIP_REDACTION_OVERLAY names a file directly, and "none" turns the overlay
+    off. None when nothing names one."""
     named = os.environ.get(OVERLAY_ENV, "").strip()
     if named:
         return None if named == "none" else Path(named).expanduser()
-    if not GUARDIAN_LOCAL.exists():
+    if not _guardian_local().exists():
         return None
     repo = _guardian_repo()
     return Path(repo).expanduser() / "config" / "redaction-denylist.json" if repo else None
 
 
+def _grip_guardian_local() -> Path:
+    """GRIP's guardian config: ${CLAUDE_DIR:-$HOME/.claude}/config/guardian.local.json."""
+    configured = os.environ.get("CLAUDE_DIR", "").strip()
+    root = Path(configured).expanduser() if configured else Path.home() / ".claude"
+    return root / "config" / "guardian.local.json"
+
+
+def _guardian_local() -> Path:
+    """HAL's own guardian config when it exists, else GRIP's, else HAL's (absent).
+
+    The operator names the private repository once, in GRIP's gitignored config,
+    and every HAL checkout on that machine with no config of its own, worktrees
+    included, then redacts with the list GRIP uses (HAL#892). A HAL config, when
+    present, wins whatever it names: it is the operator's override."""
+    if GUARDIAN_LOCAL.exists():
+        return GUARDIAN_LOCAL
+    grip = _grip_guardian_local()
+    return grip if grip.exists() else GUARDIAN_LOCAL
+
+
 def _guardian_repo() -> str:
     """The guardian_repo value from config/guardian.local.json, "" if unreadable."""
     try:
-        repo = json.loads(GUARDIAN_LOCAL.read_text(encoding="utf-8")).get("guardian_repo")
+        repo = json.loads(_guardian_local().read_text(encoding="utf-8")).get("guardian_repo")
     except (OSError, ValueError, AttributeError):
         return ""
     return repo if isinstance(repo, str) else ""
@@ -311,7 +337,7 @@ def overlay_state() -> str:
         return "disabled"
     path = private_overlay_path()
     if path is None:
-        return "invalid" if GUARDIAN_LOCAL.exists() else "unconfigured"
+        return "invalid" if _guardian_local().exists() else "unconfigured"
     return _file_state(path)
 
 
@@ -377,7 +403,7 @@ def load_overlay() -> Denylist:
     if overlay != "ok":
         raise RedactionConfigError(
             f"private redaction overlay unusable ({overlay}): "
-            f"{private_overlay_path() or GUARDIAN_LOCAL}"
+            f"{private_overlay_path() or _guardian_local()}"
         )
     return _load_file(private_overlay_path())
 
