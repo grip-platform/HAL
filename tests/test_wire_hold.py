@@ -149,9 +149,9 @@ def test_pings_flow_before_retry_and_retry_after_is_honoured(held, monkeypatch):
 
 def test_budget_emits_exactly_one_error(held):
     held.fake.actions = [reply(529, b'{}')]
-    started = time.monotonic()
+    started = time.perf_counter()  # not monotonic(): about 15.6 ms steps on Windows
     raw = exchange(held)
-    assert .45 <= time.monotonic()-started < .9
+    assert .45 <= time.perf_counter()-started < .9
     assert raw.count(b'event: error') == 1 and b'event: message_start' not in raw
     assert row(held)['outcome'] == 'budget'
 

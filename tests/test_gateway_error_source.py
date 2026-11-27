@@ -579,11 +579,13 @@ def test_the_split_timeouts_are_overridable_by_environment():
                                         short_total=60.0)
 
 
+# Durations use time.perf_counter(): on Windows, Python 3.12's time.monotonic()
+# moves in steps of about 15.6 ms, so a full 0.4 s sleep can read as 0.390 s.
 def _timed(call):
-    started = time.monotonic()
+    started = time.perf_counter()
     with pytest.raises((OSError, urllib.error.URLError)):
         call()
-    return time.monotonic() - started
+    return time.perf_counter() - started
 
 
 def _hang(seconds: float):

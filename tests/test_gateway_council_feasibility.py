@@ -20,6 +20,8 @@ import unittest
 from lib.hal.gateway_responses import translate_responses_stream
 
 _COUNCIL_DELAY_S = 0.4  # stand-in for a real 10-60s council; bounded for CI speed
+# Durations use time.perf_counter(): on Windows, Python 3.12's time.monotonic()
+# moves in steps of about 15.6 ms, so a full 0.4 s sleep can read as 0.390 s.
 
 
 def _data(raw: bytes) -> dict:
@@ -42,9 +44,9 @@ class TestCouncilHoldOpenFeasibility(unittest.TestCase):
     def test_response_created_precedes_slow_council_body(self):
         gen = translate_responses_stream(
             self._slow_council_body(), resp_id="resp_w0", model="claude-opus-4-8")
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
         first_raw = next(gen)                 # pull ONLY the first event
-        dt_created = time.monotonic() - t0
+        dt_created = time.perf_counter() - t0
         first = _data(first_raw)
 
         # 1. Stream OPENS immediately — created before the council body exists.
@@ -57,7 +59,7 @@ class TestCouncilHoldOpenFeasibility(unittest.TestCase):
         # 2. Draining the rest is where the council delay is actually paid,
         #    and the late body still forms a valid, ordered, complete stream.
         raw_rest = list(gen)
-        total_elapsed = time.monotonic() - t0
+        total_elapsed = time.perf_counter() - t0
         self.assertGreaterEqual(total_elapsed, _COUNCIL_DELAY_S)  # body came late
 
         rest = [e for e in (_data(b) for b in raw_rest) if e]

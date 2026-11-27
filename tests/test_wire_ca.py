@@ -486,10 +486,23 @@ def test_windows_key_dacl_contains_only_system_and_current_user(home):
         sddl = text.value
     finally:
         kernel.LocalFree(c.cast(text, c.c_void_p))
+    # SDDL text writes a well-known SID as a two-letter alias: the built-in
+    # Administrator account (RID 500) is "LA". So the user is expected in the form
+    # SDDL itself gives the user's SID, which is the raw SID for any other account.
     sid = api._user_sid()
-    assert sddl.startswith(f"O:{sid}D:P")
-    assert sddl.count("(A;") == 2
-    assert ";;;SY)" in sddl and f";;;{sid})" in sddl
+    probe = c.c_void_p()
+    api._check(api._descriptor(f"O:{sid}", 1, c.byref(probe), None))
+    owner_text = w.LPWSTR()
+    try:
+        api._check(to_string(probe, 1, wire_ca._OWNER_SECURITY_INFORMATION,
+                             c.byref(owner_text), None))
+        user = owner_text.value[len("O:"):]
+    finally:
+        kernel.LocalFree(c.cast(owner_text, c.c_void_p))
+        kernel.LocalFree(probe)
+    assert sddl.startswith(f"O:{user}D:P"), sddl
+    assert sddl.count("(A;") == 2, sddl
+    assert ";;;SY)" in sddl and f";;;{user})" in sddl, sddl
 
 
 def test_a_short_windows_pipe_write_sends_the_remaining_bytes():
